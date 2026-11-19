@@ -15,6 +15,20 @@ CustomProxy :3001  ──►  provider 1 (keys k1..kN, rotated)
                    ──►  ...
 ```
 
+## Contents
+
+- [What it does](#what-it-does)
+- [Quick start](#quick-start)
+- [Key format (.env)](#key-format-env)
+- [Adding a provider](#adding-a-provider)
+- [Model filters](#model-filters)
+- [Endpoints](#endpoints)
+- [Error model](#error-model)
+- [Production notes](#production-notes)
+- [Tests & CI](#tests--ci)
+- [Documentation](#documentation)
+- [License](#license)
+
 ## What it does
 
 | Feature | Detail |
@@ -144,6 +158,34 @@ pytest
 ```
 
 GitHub Actions (`.github/workflows/ci.yml`) compiles all sources and runs the suite on Python 3.12.
+
+## Repository layout
+
+```
+customproxy/
+├── src/server.py          proxy core (FastAPI, routing, rotation, catalog)
+├── src/config.json        provider definitions (no secrets — env names only)
+├── key_rotate_proxy.py    per-service key rotation relays (MCP tools)
+├── run-services.sh        container PID 1: proxy + relay supervisor
+├── entrypoint.sh          ownership fix, then drops to uid 10001
+├── compose.yml            hardened standalone stack
+├── Dockerfile
+├── tests/                 pytest suite (18 tests)
+├── docs/                  ARCHITECTURE.md, CONFIGURATION.md
+├── skills/                agent skills for provider/key/model management
+├── .env.example           every environment variable, with placeholders
+└── .github/               CI + issue/PR templates
+```
+
+## Documentation
+
+| Document | Covers |
+|---|---|
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Components, request path, catalog refresh, error contract |
+| [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Every config key, env override, filter semantics, key pools |
+| [SECURITY.md](SECURITY.md) | Secret handling, runtime hardening, key-leak runbook |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Local setup, test commands, review rules |
+| [CHANGELOG.md](CHANGELOG.md) | Release history |
 
 ## License
 
