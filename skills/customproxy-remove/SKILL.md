@@ -23,8 +23,9 @@ runtime, in this order:
    anywhere: Windows, macOS, Linux, or WSL.
 
 The proxy's host port is published by `compose.yml` (default `3001`).
-Discover it at runtime instead of assuming: `docker port CustomProxy
-3001/tcp`). Base URL is `http://127.0.0.1:<port>/v1`.
+Discover it at runtime instead of assuming:
+`docker compose port customproxy 3001`. Resolve it from `<customproxy-dir>`, so it
+works whatever the container is named. Base URL is `http://127.0.0.1:<port>/v1`.
 
 Everything else in this skill is relative to `<customproxy-dir>`: config at
 `src/config.json`, secrets at `.env`, catalog at `state/kilo_models.json`,
@@ -116,7 +117,7 @@ catch { [int]$_.Exception.Response.StatusCode; ($_.ErrorDetails.Message | Conver
 
 ```powershell
 # 4) catalog file refreshed without it (after one refresh cycle)
-docker logs CustomProxy --tail 5 | Select-String "catalog written"
+docker compose logs --tail 5 | Select-String "catalog written"
 ```
 
 ## B) Remove a provider
@@ -152,7 +153,7 @@ $mods = Invoke-RestMethod "http://127.0.0.1:<port>/v1/models" -Headers $hdr
 ($mods.data | Where-Object { $_.owned_by -eq '<id>' } | Measure-Object).Count   # expect 0
 
 # relays still healthy (they share pools - prove nothing broke)
-docker inspect CustomProxy --format "{{.State.Health.Status}}"                  # expect healthy
+docker compose ps --format "{{.Name}} | {{.Status}}"                            # expect (healthy)
 ```
 
 5. Optional cleanup: remove the `XY_API_KEYS` line from `.env.example` if the

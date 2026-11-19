@@ -24,6 +24,7 @@ See also [.env.example](../.env.example) for a ready-to-copy template.
 | `request_log_enabled` | `true` | Write `logs/requests.jsonl` |
 | `request_log_entries` | `2000` | In-memory log ring size |
 | `request_log_jsonl` | `logs/requests.jsonl` | Log path, relative to the project root (env `REQUEST_LOG_JSONL` overrides) |
+| `request_log_jsonl_max_bytes` | `67108864` | Rotate `requests.jsonl` once it grows past this size (64 MiB) |
 | `kilo_config_path` | `state/kilo_models.json` | Catalog path, relative to the project root (env `KILO_CONFIG_PATH` overrides) |
 | `provider_filters` | `{include:[],exclude:[]}` | Provider allow/deny (globs or `re:`) |
 

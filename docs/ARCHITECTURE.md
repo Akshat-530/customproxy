@@ -88,4 +88,6 @@ Everything is returned in OpenAI's envelope with the real reason:
 | All keys cooling | `429 all_keys_cooling` + seconds |
 | Context too long | `400 context_length` + exact message |
 | Filtered model | `403 model_filtered` |
+| Upstream 403 (not auth) | `403 forbidden` + exact message |
+| Upstream 400 (other) | `400 invalid_request` + exact message |
 | Upstream 5xx after retries | `502 upstream_error` + last message |

@@ -39,7 +39,7 @@ never touch a harness file themselves.
   `<customproxy-dir>` and resolve it at runtime — never a fixed drive letter
   or user path.
 - **Port:** published by `compose.yml` as `${PROXY_HOST_PORT:-3001}`. Discover
-  it with `docker port customproxy 3001/tcp` rather than assuming.
+  it with `docker compose port customproxy 3001` rather than assuming.
 - **Container name:** `customproxy`.
 - **Secrets:** keys/tokens only in `.env` (gitignored); never printed, never
   in `config.json`, logs, or memory — masked as `first4...last2`.

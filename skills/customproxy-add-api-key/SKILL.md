@@ -24,8 +24,9 @@ runtime, in this order:
    anywhere: Windows, macOS, Linux, or WSL.
 
 The proxy's host port is published by `compose.yml` (default `3001`).
-Discover it at runtime instead of assuming: `docker port CustomProxy
-3001/tcp`). Base URL is `http://127.0.0.1:<port>/v1`.
+Discover it at runtime instead of assuming:
+`docker compose port customproxy 3001`. Resolve it from `<customproxy-dir>`, so it
+works whatever the container is named. Base URL is `http://127.0.0.1:<port>/v1`.
 
 Everything else in this skill is relative to `<customproxy-dir>`: config at
 `src/config.json`, secrets at `.env`, catalog at `state/kilo_models.json`,
@@ -44,7 +45,7 @@ this provider limited to selected models, set `include_models` /
 enforced on the catalog and on direct calls.
 
 Deployment: `<customproxy-dir>`
-Container: `CustomProxy` (port `127.0.0.1:<port>`).
+Container: compose service `customproxy` (host port `127.0.0.1:<port>`).
 Secrets live in that project's `.env`; config in `src/config.json`.
 
 **Never print, echo, or log the API key.** Refer to it only by label.
@@ -208,7 +209,7 @@ restart` will NOT pick it up. Use recreate:
 ```powershell
 Set-Location "<customproxy-dir>"
 docker compose up -d --force-recreate
-docker ps --filter name=CustomProxy --format "{{.Status}}"
+docker compose ps --format "{{.Name}} | {{.Status}}"
 ```
 
 Wait for `healthy`, then confirm the label is in the pool (stats only):

@@ -24,8 +24,9 @@ runtime, in this order:
    anywhere: Windows, macOS, Linux, or WSL.
 
 The proxy's host port is published by `compose.yml` (default `3001`).
-Discover it at runtime instead of assuming: `docker port CustomProxy
-3001/tcp`). Base URL is `http://127.0.0.1:<port>/v1`.
+Discover it at runtime instead of assuming:
+`docker compose port customproxy 3001`. Resolve it from `<customproxy-dir>`, so it
+works whatever the container is named. Base URL is `http://127.0.0.1:<port>/v1`.
 
 Everything else in this skill is relative to `<customproxy-dir>`: config at
 `src/config.json`, secrets at `.env`, catalog at `state/kilo_models.json`,
@@ -34,7 +35,7 @@ logs at `logs/requests.jsonl`, compose file at `compose.yml`.
 # CustomProxy - Add a Provider
 
 Deployment: `<customproxy-dir>`
-Container: `CustomProxy` (port `127.0.0.1:<port>`).
+Container: compose service `customproxy` (host port `127.0.0.1:<port>`).
 Config: `src/config.json`. Secrets: `.env`. Skills to chain:
 `customproxy-add-api-key` (keys) and `customproxy-add-model` (models).
 
@@ -192,7 +193,7 @@ $tok = (Get-Content .env | Where-Object { $_ -match '^PROXY_AUTH_TOKEN=' }) -rep
 $hdr = @{ Authorization = "Bearer $tok" }
 
 # 1. container healthy
-docker ps --filter name=CustomProxy --format "{{.Status}}"
+docker compose ps --format "{{.Name}} | {{.Status}}"
 
 # 2. provider present in health
 $h = Invoke-RestMethod "http://127.0.0.1:<port>/health" -Headers $hdr

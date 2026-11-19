@@ -24,8 +24,9 @@ runtime, in this order:
    anywhere: Windows, macOS, Linux, or WSL.
 
 The proxy's host port is published by `compose.yml` (default `3001`).
-Discover it at runtime instead of assuming: `docker port CustomProxy
-3001/tcp`). Base URL is `http://127.0.0.1:<port>/v1`.
+Discover it at runtime instead of assuming:
+`docker compose port customproxy 3001`. Resolve it from `<customproxy-dir>`, so it
+works whatever the container is named. Base URL is `http://127.0.0.1:<port>/v1`.
 
 Everything else in this skill is relative to `<customproxy-dir>`: config at
 `src/config.json`, secrets at `.env`, catalog at `state/kilo_models.json`,
@@ -90,7 +91,7 @@ upstream omits from its listing.
 2. Read the auth token from that project's `.env` (`PROXY_AUTH_TOKEN=`) -
    never print it. Example header: `Authorization: Bearer $env:PAT`.
 3. Confirm the container is running:
-   `docker ps --filter name=CustomProxy --format "{{.Status}}"`.
+   `docker compose ps --format "{{.Name}} | {{.Status}}"`.
    If unhealthy, `docker compose up -d --build` in the project dir and re-check
    `GET /health` before continuing.
 

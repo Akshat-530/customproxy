@@ -33,13 +33,17 @@ Resolve `<customproxy-dir>` at runtime - never assume a drive letter:
 Resolve the port, don't assume it. In order:
 
 ```bash
-# 1. what compose actually published
-docker port customproxy 3001/tcp        # e.g. 127.0.0.1:3001
+# 1. what compose actually published (run inside <customproxy-dir>)
+docker compose port customproxy 3001    # e.g. 127.0.0.1:3001
 # 2. fallback: the .env value
 grep -E '^PROXY_HOST_PORT=' <customproxy-dir>/.env
 # 3. fallback: the default
 #    3001
 ```
+
+`docker compose port` resolves the *service*, so it works regardless of what
+the container is named. `docker port <name>` also works, but the name is
+case-sensitive and depends on how the stack was created.
 
 The port inside the container is always `3001`; only the published host port
 varies. Use `<port>` everywhere below.
@@ -220,7 +224,7 @@ curl -s -X POST http://127.0.0.1:<port>/v1/chat/completions \
 | 403 model_filtered | model not whitelisted | `customproxy-add-model` |
 | 503 no_keys | provider has no key | `customproxy-add-api-key` |
 | 429 all_keys_cooling | every key rate-limited | wait, or add another key |
-| connection refused | container down or wrong port | `docker ps`, `docker port customproxy 3001/tcp` |
+| connection refused | container down or wrong port | `docker compose ps`, `docker compose port customproxy 3001` |
 | empty model list | no provider has a key yet | add a key, then `/refresh` |
 
 ## Step 7 - Report

@@ -230,7 +230,7 @@ customproxy/
 ├── entrypoint.sh          ownership fix, then drops to uid 10001
 ├── compose.yml            hardened standalone stack
 ├── Dockerfile
-├── tests/                 pytest suite (18 tests)
+├── tests/                 pytest suite (35 tests)
 ├── docs/                  ARCHITECTURE.md, CONFIGURATION.md
 ├── skills/                agent skills for provider/key/model management
 ├── .env.example           every environment variable, with placeholders

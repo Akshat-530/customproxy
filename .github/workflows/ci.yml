@@ -21,7 +21,7 @@ jobs:
           pip install -r requirements.txt -r requirements-dev.txt
 
       - name: Compile all sources
-        run: python -m compileall -q src key_rotate_proxy.py
+        run: python -m compileall -q src key_rotate_proxy.py healthcheck.py
 
       - name: Run tests
         env:

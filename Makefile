@@ -26,7 +26,7 @@ test:
 	$(PYTHON) -m pytest
 
 compile:
-	$(PYTHON) -m compileall -q src key_rotate_proxy.py
+	$(PYTHON) -m compileall -q src key_rotate_proxy.py healthcheck.py
 
 build:
 	$(COMPOSE) build

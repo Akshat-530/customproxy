@@ -4,6 +4,19 @@ All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this
 project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- `filter_free` dropped paid models from the catalog but still forwarded a
+  direct call to them upstream, because the dropped ids were never recorded and
+  so had no metadata to refuse. Paid ids are now tracked per provider and
+  refused with `403 model_filtered`; `manual_models` still bypass the filter.
+
+### Changed
+- `customproxy-connect-harness` is the only skill that reads or edits a harness
+  configuration. `customproxy-add-provider`, `-add-api-key` and `-add-model`
+  point at it instead of touching harness files themselves.
+
 ## [1.0.0] - 2026-11-19
 
 ### Added
@@ -35,5 +48,11 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `customproxy-remove`; portable (no hardcoded paths, runtime discovery).
 - **Hardened runtime** — non-root user, read-only root filesystem, dropped
   capabilities, `no-new-privileges`, tmpfs `/tmp`, health-checked relays.
-- **Tests + CI** — 18 unit tests; GitHub Actions workflow compiles and tests on
-  Python 3.12.
+- **Free-model auto-discovery** — `filter_free` providers expose *only* free
+  models, discovered live from each provider's `/models` on every refresh. No
+  sync script and no static list. Enabled by default for `kilo`, `nvidia` and
+  `openrouter`; opt in per provider anywhere else. Models with no pricing data
+  are kept, since they cannot be proven paid.
+- **Tests + CI** — 35 tests (unit + end-to-end against a mocked upstream);
+  GitHub Actions workflow compiles `src`, `key_rotate_proxy.py` and
+  `healthcheck.py`, then runs pytest on Python 3.12.
