@@ -89,5 +89,7 @@ Everything is returned in OpenAI's envelope with the real reason:
 | Context too long | `400 context_length` + exact message |
 | Filtered model | `403 model_filtered` |
 | Upstream 403 (not auth) | `403 forbidden` + exact message |
-| Upstream 400 (other) | `400 invalid_request` + exact message |
+| Upstream 400/404/405/409/413/415/422 | `400`-class `invalid_request` (no key rotation) |
+| Invalid upstream path (`..`, `//`, URL) | `400 invalid_request` (`invalid_path`) |
+| Missing/invalid proxy token | `401 unauthorized` in the standard error envelope |
 | Upstream 5xx after retries | `502 upstream_error` + last message |

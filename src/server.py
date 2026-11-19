@@ -47,6 +47,19 @@ REQUEST_LOG_MAX = int(CFG.get("request_log_max_bytes", 32 * 1024 * 1024))
 MAX_REQUEST_BYTES = int(CFG.get("max_request_bytes", 32 * 1024 * 1024))
 RATE_LIMIT_PER_MIN = int(CFG.get("rate_limit_per_minute", 0))
 CORS_ORIGINS = CFG.get("cors_origins") or ["*"]
+# Proxies whose X-Forwarded-For header may be believed (empty = none).
+# Parsed inline because the list helpers are defined further down the module.
+_TRUSTED_RAW = os.environ.get("TRUSTED_PROXIES") or CFG.get("trusted_proxies") or []
+if isinstance(_TRUSTED_RAW, str):
+    TRUSTED_PROXIES = [x.strip() for x in _TRUSTED_RAW.split(",") if x.strip()]
+else:
+    TRUSTED_PROXIES = [str(x).strip() for x in _TRUSTED_RAW if str(x).strip()]
+
+
+def _trusted_proxy(peer: str) -> bool:
+    """True when `peer` is a proxy we configured to trust for XFF."""
+    if not TRUSTED_PROXIES: return False
+    return _matches(peer or "", TRUSTED_PROXIES)
 
 def _env_bool(name: str, default: bool) -> bool:
     v = os.environ.get(name)
@@ -65,7 +78,10 @@ def _request_token(request: Request) -> str:
 def _check_auth(request: Request):
     if not AUTH_TOKEN: return
     if not hmac.compare_digest(_request_token(request), AUTH_TOKEN):
-        raise HTTPException(status_code=401, detail="unauthorized")
+        # Same envelope as every other error so OpenAI clients find
+        # error.message instead of falling back to a bare {"detail": ...}.
+        rid = (request.headers.get("x-request-id") or uuid.uuid4().hex)[:64]
+        raise HTTPException(status_code=401, detail="unauthorized", headers={"x-request-id": rid})
 
 class DebugLog:
     def __init__(self):
@@ -165,14 +181,22 @@ def _load_custom_providers() -> None:
         log.info("custom provider loaded from env: %s -> %s", name, cfg.get("base_url"))
 
 def _client_id(request: Request) -> str:
+    """Identify the caller for rate limiting.
+
+    X-Forwarded-For is attacker-controlled unless something in front of us sets
+    it, so honouring it unconditionally makes any per-client limit trivially
+    bypassable by sending a new fake address. Only read it when the deployment
+    declares the trusted proxies (TRUSTED_PROXIES / config trusted_proxies).
+    """
+    peer = getattr(getattr(request, "client", None), "host", None) or "unknown"
+    if not _trusted_proxy(peer): return peer
     xff = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
-    if xff: return xff
-    client = getattr(request, "client", None)
-    return getattr(client, "host", None) or "unknown"
+    return xff or peer
 
 _BILLING_HINTS = ("billing", "payment required", "insufficient credit", "insufficient quota",
-                  "insufficient balance", "out of credits", "no credits", "credit balance",
-                  "balance", "top up", "top-up", "exceeded your current quota")
+                  "insufficient balance", "insufficient funds", "insufficient user quota",
+                  "out of credits", "no credits", "credit balance", "balance", "top up",
+                  "top-up", "exceeded your current quota", "quota exceeded")
 _AUTH_HINTS = ("invalid api key", "incorrect api key", "invalid auth key", "api key not valid",
                "unauthenticated", "authentication", "unauthorized", "api_key_invalid")
 _RATE_HINTS = ("rate limit", "too many requests", "requests per", "rpm ", "tpm ", "concurrency")
@@ -195,15 +219,56 @@ def _extract_error_message(raw: bytes) -> str:
     return raw.decode("utf-8", "ignore").strip()[:2000]
 
 def _classify_failure(status: int | None, message: str) -> tuple[str, int]:
+    """Map an upstream failure to (kind, status).
+
+    Explicit status codes are unambiguous and win over message heuristics: a
+    402 is billing and a 429 is a rate limit regardless of which words the
+    upstream used. Message hints only decide when the code is generic
+    (400/None). This matters because callers derive key rotation from the
+    returned kind, so mislabelling a 402 as a context error would stop
+    rotation exactly when a fresh key is what is needed.
+    """
     low = (message or "").lower()
-    if any(h in low for h in _CONTEXT_HINTS): return "context_length", status or 400
-    if status == 402 or any(h in low for h in _BILLING_HINTS): return "billing_required", 402
-    if status == 401 or any(h in low for h in _AUTH_HINTS): return "auth_error", 401 if status in (None, 401) else status
-    if status == 429 or any(h in low for h in _RATE_HINTS): return "rate_limited", 429
-    if status == 403: return "forbidden", 403
+    if status == 402: return "billing_required", 402
+    if status == 429: return "rate_limited", 429
+    # Some upstreams report an exhausted balance as 403 rather than 402, so a
+    # billing phrase outranks the bare "forbidden" reading; either way the key
+    # rotates, but the label tells the operator what actually happened.
+    if status == 403:
+        if any(h in low for h in _BILLING_HINTS): return "billing_required", 402
+        return "forbidden", 403
+    # Client-side faults: the request, not the key, is wrong. Rotating would
+    # burn the pool on an error every key will reproduce.
+    if status in (404, 405, 409, 413, 415, 422): return "invalid_request", status
     if status is not None and status >= 500: return "upstream_error", 502
+    if any(h in low for h in _CONTEXT_HINTS): return "context_length", status or 400
+    if any(h in low for h in _BILLING_HINTS): return "billing_required", 402
+    if status == 401 or any(h in low for h in _AUTH_HINTS): return "auth_error", 401 if status in (None, 401) else status
+    if any(h in low for h in _RATE_HINTS): return "rate_limited", 429
     if status == 400: return "invalid_request", 400
     return "upstream_error", status or 502
+
+
+# Failure kinds that mean "this key is the problem, try the next one". A
+# context-length or malformed-request error is the caller's fault: rotating the
+# key cannot help and would burn every key in the pool.
+_ROTATE_KINDS = frozenset({"billing_required", "auth_error", "rate_limited",
+                           "forbidden", "upstream_error"})
+
+
+def _safe_upstream_path(path: str) -> Optional[str]:
+    """Normalise the forwarded sub-path, refusing escapes from the base path.
+
+    `path` arrives from the catch-all route, so it is attacker-controlled.
+    Joining it naively onto `base_url` lets '../..' walk out of the provider's
+    API prefix, so traversal segments and absolute URLs are rejected outright.
+    Returns None when the path must be refused.
+    """
+    p = (path or "").strip()
+    if not p: return ""
+    if "://" in p or p.startswith("//"): return None
+    if any(seg == ".." for seg in p.split("/")): return None
+    return "/".join(s for s in p.split("/") if s and s != ".")
 
 def _error_response(message: str, kind: str, status: int, request_id: str, **extra) -> JSONResponse:
     err = {"message": _redact(message), "type": kind, "code": kind, "request_id": request_id}
@@ -495,6 +560,10 @@ class Provider:
         self.include_models=_as_list(cfg.get("include_models"))
         self.exclude_models=_as_list(cfg.get("exclude_models"))
         self.max_models=int(cfg.get("max_models") or 0)
+        # Ids that survived the last listing cap. A cap is an access rule, not a
+        # display preference: serving 1 model but allowing calls to the other 99
+        # would silently defeat the filter, so allows() consults this too.
+        self._capped_out: set[str]=set()
         self.filter_free=bool(cfg.get("filter_free", False))
         self.reasoning_auto=bool(cfg.get("reasoning_auto", True))
         self.reasoning_default=str(cfg.get("reasoning_default") or "medium").lower()
@@ -525,6 +594,10 @@ class Provider:
         # from the catalog, so a direct call to one is refused instead of
         # being forwarded just because it has no metadata.
         self._paid_blocked: set[str]=set()
+        # Populated on every successful map load. Used so a filter_free provider
+        # refuses ids it never saw, instead of forwarding an unknown (paid) name.
+        self._map_ids: set[str]=set()
+        self._map_loaded: bool=False
         self._last_map=0.0; self._last_attempt=0.0; self._map_attempts=0
     def _hit(self, mid: str, patterns) -> bool:
         """Filters accept either the upstream id or the catalog id."""
@@ -539,6 +612,14 @@ class Provider:
             if mid in getattr(self, "_paid_blocked", ()): return False
             meta = self.model_meta.get(mid) or {}
             if meta.get("free") is False: return False
+            # With a live map, anything absent from it is unknown to this
+            # provider: free-only mode refuses it rather than forwarding a name
+            # that may exist upstream as a paid model.
+            if getattr(self, "_map_loaded", False):
+                ids = self._map_ids
+                if mid not in ids and mid.replace("/", "-") not in ids: return False
+        capped = getattr(self, "_capped_out", ())
+        if mid in capped or mid.replace("/", "-") in capped: return False
         return True
     async def load_map(self):
         self._last_attempt=time.time(); self._map_attempts+=1
@@ -557,11 +638,12 @@ class Provider:
                 debug_log.record("map_fail", provider=self.name, key=entry["label"], error="bad_payload")
                 log.warning("[%s] /models returned a non-list payload; keeping previous map", self.name)
                 continue
-            mapping={}; model_ids=[]; metas={}; paid=set()
+            mapping={}; model_ids=[]; metas={}; paid=set(); raw_count=0
             for m in models:
                 if not isinstance(m, dict): continue
                 mid=m.get("id","")
                 if not mid: continue
+                raw_count+=1
                 if self.only_models and not self._hit(mid, self.only_models): continue
                 if self.include_models and not self._hit(mid, self.include_models): continue
                 if self.exclude_models and self._hit(mid, self.exclude_models): continue
@@ -573,16 +655,28 @@ class Provider:
                         paid.add(mid); paid.add(mid.replace("/","-")); continue
                 model_ids.append(mid); mapping[mid]=mid; mapping[mid.replace("/","-")]=mid
                 metas[mid]=_upstream_meta(m)
+            capped=set()
             if self.max_models and len(model_ids) > self.max_models:
                 # Deterministic cap: free models first, then alphabetical.
-                model_ids = sorted(model_ids, key=lambda x: (metas.get(x, {}).get("free") is not True, x))[:self.max_models]
+                kept = sorted(model_ids, key=lambda x: (metas.get(x, {}).get("free") is not True, x))[:self.max_models]
+                capped = {x for x in model_ids if x not in kept}
+                capped |= {x.replace("/", "-") for x in capped}
+                model_ids = kept
                 mapping = {}
                 for x in model_ids:
                     mapping[x] = x; mapping[x.replace("/", "-")] = x
-            if not model_ids:
+            if not model_ids and not raw_count:
+                # The upstream returned nothing at all: treat it as a transient
+                # failure and keep the previous map rather than blanking it.
                 debug_log.record("map_fail", provider=self.name, key=entry["label"], error="empty_map")
-                log.warning("[%s] /models returned no usable models; keeping previous map", self.name)
+                log.warning("[%s] /models returned no models; keeping previous map", self.name)
                 continue
+            # raw_count > 0 but every model was filtered out (e.g. filter_free
+            # and the upstream went all-paid). That is an authoritative answer,
+            # not a failure: publish the empty catalog AND the blocked set so
+            # stale free models stop being advertised and paid ones are refused.
+            if not model_ids:
+                log.warning("[%s] /models returned only filtered-out models; publishing empty map", self.name)
             for mid in self.manual_ids:
                 if mid not in mapping:
                     mapping[mid]=mid; mapping[mid.replace("/","-")]=mid; model_ids.append(mid)
@@ -590,7 +684,24 @@ class Provider:
             # Hand-added models bypass every filter, including the free one.
             for mid in self.manual_ids:
                 paid.discard(mid); paid.discard(mid.replace("/","-"))
+            # Declared `models` are configured intent, and allows() already
+            # permits them. Keep them listed after a live map so the catalog and
+            # the access check cannot disagree (a model callable but invisible).
+            # The decision is made against THIS refresh's filters, not the
+            # previous map's, so a declared model that is also filtered out here
+            # stays out of both.
+            for mid in self.only_models:
+                if mid in mapping: continue
+                if mid in paid or mid.replace("/","-") in paid: continue
+                if self.include_models and not self._hit(mid, self.include_models): continue
+                if self.exclude_models and self._hit(mid, self.exclude_models): continue
+                mapping[mid]=mid; mapping[mid.replace("/","-")]=mid
+                model_ids.append(mid)
+                metas.setdefault(mid, self.model_meta.get(mid) or {})
             self._paid_blocked=paid
+            self._capped_out=capped
+            self._map_ids=set(model_ids) | set(mapping)
+            self._map_loaded=True
             self.alias_to_id=mapping; self.model_ids=model_ids; self.model_meta=metas; self._last_map=time.time()
             debug_log.record("map_ok", provider=self.name, models=len(model_ids), key=entry["label"])
             log.info("[%s] routing map loaded: %d model ids", self.name, len(model_ids)); return
@@ -647,7 +758,10 @@ def _merged_meta(provider: Provider, mid: str) -> dict:
     }
     free = cat.get("free")
     if free is None: free = up.get("free")
-    pricing = cat.get("pricing") or up.get("pricing") or {"prompt":"0","completion":"0","request":"0"}
+    # Never invent a price. When neither the catalog nor the upstream payload
+    # reports pricing, the entry is left empty so consumers see "unknown"
+    # instead of being told the model is free (0/0) when it may not be.
+    pricing = cat.get("pricing") or up.get("pricing") or {}
     source = "catalog" if cat else ("upstream" if up else "default")
     return {
         "metadata": {"context_window": {"max_input_tokens": int(ctx), "max_output_tokens": int(out)},
@@ -702,12 +816,29 @@ def _write_catalog() -> bool:
         if stale:
             log.warning("catalog written without models for: %s", ", ".join(stale))
         models = _build_catalog()
-        if not models: return True
+        if not models:
+            # Nothing to advertise. Do not leave a previous catalog on disk:
+            # _read_local_models() and /.well-known/opencode would keep serving
+            # models that no longer exist. Remove it (best effort) and report.
+            try:
+                if KILO_CONFIG_PATH.exists():
+                    KILO_CONFIG_PATH.unlink()
+                    _LOCAL_MODELS_CACHE["mtime"] = None
+                    _LOCAL_MODELS_CACHE["data"] = {}
+                    log.info("catalog empty; removed stale %s", KILO_CONFIG_PATH)
+            except OSError as e:
+                log.warning("catalog empty and stale file could not be removed: %s", e)
+            return True
         payload = {"provider": {"customProxy": {"models": models}}}
         tmp = KILO_CONFIG_PATH.with_name(KILO_CONFIG_PATH.name + ".tmp")
         tmp.write_text(json.dumps(payload, indent=1, ensure_ascii=False), encoding="utf-8")
         os.replace(tmp, KILO_CONFIG_PATH)
-        os.chmod(KILO_CONFIG_PATH, 0o664)
+        try:
+            os.chmod(KILO_CONFIG_PATH, 0o664)
+        except OSError as e:
+            # The catalog is already written and valid; a chmod failure must not
+            # be reported as a write failure or the loop would rewrite forever.
+            log.debug("catalog chmod skipped: %s", e)
         _LOCAL_MODELS_CACHE["mtime"] = None
         log.info("catalog written: %d models -> %s", len(models), KILO_CONFIG_PATH)
         return True
@@ -784,6 +915,14 @@ async def lifespan(app: FastAPI):
         if client: await client.aclose()
 
 app = FastAPI(title="CustomProxy", lifespan=lifespan)
+
+
+@app.exception_handler(HTTPException)
+async def _http_exc_handler(request: Request, exc: HTTPException):
+    """Render auth (and any other) HTTPException in the OpenAI error envelope."""
+    rid = (exc.headers or {}).get("x-request-id") or (request.headers.get("x-request-id") or uuid.uuid4().hex)[:64]
+    kind = "unauthorized" if exc.status_code == 401 else "invalid_request"
+    return _error_response(str(exc.detail), kind, exc.status_code, rid)
 app.add_middleware(CORSMiddleware, allow_origins=CORS_ORIGINS, allow_methods=["*"],
                    allow_headers=["*"], expose_headers=["x-request-id"])
 
@@ -879,7 +1018,7 @@ async def get_model_info(request: Request, model_id: str):
     if not (provider.allows(alias) or provider.allows(upstream_model)):
         rid = uuid.uuid4().hex[:16]
         return _error_response(f"Model '{mid}' is filtered out for provider '{provider_name}'.",
-                               "model_filtered", 404, rid, provider=provider_name)
+                               "model_filtered", 403, rid, provider=provider_name)
     _meta = _model_meta_out(provider, upstream_model)
     return {
         "id": f"{provider_name}/{upstream_model}" if provider_name else mid,
@@ -1110,7 +1249,14 @@ async def proxy(request: Request, path: str):
                      provider=provider.name, upstream_model=upstream_model,
                      error_type="model_filtered", error=msg)
         return _error_response(msg, "model_filtered", 403, request_id, provider=provider.name)
-    url = f"{provider.base_url}/{path}"
+    # Refuse path traversal / absolute-URL escapes before building the URL.
+    safe_path = _safe_upstream_path(path)
+    if safe_path is None:
+        msg = f"Invalid upstream path '{path}'."
+        _log_request(request_id, "error", request, path, model_id, t0, http_status=400,
+                     provider=provider.name, error_type="invalid_path", error=msg)
+        return _error_response(msg, "invalid_request", 400, request_id, provider=provider.name)
+    url = f"{provider.base_url}/{safe_path}"
     if request.url.query: url = f"{url}?{request.url.query}"
     last_status=None; last_message=""; last_key=None; last_retry_after=None
     reasoning_stripped=False; passthrough=None; saw_429=False; attempts=0
@@ -1234,11 +1380,11 @@ async def proxy(request: Request, path: str):
             debug_log.record("retry_same_key",provider=provider.name,key=entry["label"],reason="reasoning_strip")
             queue.insert(0,entry); continue
         # Rotate on auth/billing/throttle/5xx; keep context-length errors client-side.
-        rotate = status in (401,402,403,429) or status>=500
-        if any(h in emsg for h in _CONTEXT_HINTS):
-            rotate = False
-        elif any(h in emsg for h in _BILLING_HINTS) or any(h in emsg for h in _RATE_HINTS):
-            rotate = True
+        # Derive rotation from the same classifier used for the response, so the
+        # two can never disagree. Context-length and malformed-request errors are
+        # the caller's fault and stop immediately; everything key-related rotates.
+        kind_now, _ = _classify_failure(status, message)
+        rotate = kind_now in _ROTATE_KINDS
         if rotate:
             ra = up.headers.get("retry-after")
             try: ra_f = float(ra) if ra else None

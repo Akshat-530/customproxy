@@ -149,7 +149,7 @@ CUSTOM_PROVIDERS_JSON=[{"name":"myprovider","base_url":"https://api.example.com/
 | `models` | exact ids or globs; empty = discover everything |
 | `include_models` | must match one pattern to be kept |
 | `exclude_models` | matching models are dropped (catalog + calls → `403 model_filtered`) |
-| `filter_free` | keep only models positively known to be free; paid ones are dropped from the catalog **and** blocked on direct calls (`403 model_filtered`). Unknown-pricing models are kept |
+| `filter_free` | keep only models positively known to be free; paid ones are dropped from the catalog **and** blocked on direct calls (`403 model_filtered`). Unknown-pricing models are kept, but once a map has loaded an id the upstream never listed is refused too |
 | `max_models` | cap the catalog (free models first, then alphabetical) |
 
 Precedence: `models` → `include_models` → `exclude_models` → `filter_free` → `max_models`.
@@ -187,7 +187,7 @@ Every response carries `x-request-id`; the same id is in `/logs` and
 
 - Runs unprivileged (`app`, uid 10001) with `no-new-privileges`, dropped caps, read-only root FS, `tmpfs /tmp`.
 - Startup **refuses to run** without `PROXY_AUTH_TOKEN` unless `allow_no_auth: true`.
-- Body size limit: `max_request_bytes` (32 MB default). Optional local rate limit: `rate_limit_per_minute` (0 = off).
+- Body size limit: `max_request_bytes` (32 MB default). Optional local rate limit: `rate_limit_per_minute` (0 = off); since `X-Forwarded-For` is caller-controlled, it is only honoured for peers listed in `trusted_proxies`.
 - Config toggles: `debug_enabled`, `request_body_log_enabled` (full prompts; off by default), `write_catalog`, `catalog_refresh_seconds`.
 - The entrypoint needs `CHOWN/SETUID/SETGID` caps only to fix mount ownership, then drops to `app`.
 - MCP key-rotation relays are **opt-in**: leave `KEY_ROTATE_SERVICES` empty and only the proxy runs.
@@ -230,7 +230,7 @@ customproxy/
 ├── entrypoint.sh          ownership fix, then drops to uid 10001
 ├── compose.yml            hardened standalone stack
 ├── Dockerfile
-├── tests/                 pytest suite (35 tests)
+├── tests/                 pytest suite (46 tests)
 ├── docs/                  ARCHITECTURE.md, CONFIGURATION.md
 ├── skills/                agent skills for provider/key/model management
 ├── .env.example           every environment variable, with placeholders

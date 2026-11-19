@@ -305,3 +305,212 @@ def test_manual_model_bypasses_free_filter(tmp_path, monkeypatch):
         assert len(calls) == 1
 
     cp.providers.clear()
+
+
+# ---------------------------------------------------------------------------
+# Regression tests for the logic-fix pass. Each one failed before the fix.
+# ---------------------------------------------------------------------------
+
+def test_billing_402_with_context_words_still_rotates():
+    """A 402 must stay billing even when the message mentions max_tokens.
+
+    Before the fix, context hints were checked first, so a billing error that
+    happened to contain 'max_tokens' was classed context_length, and rotation
+    stopped instead of trying the next key.
+    """
+    sys.modules.pop("server", None)
+    import server as cp
+
+    kind, status = cp._classify_failure(402, "You exceeded your max_tokens billing quota")
+    assert (kind, status) == ("billing_required", 402)
+    assert kind in cp._ROTATE_KINDS
+
+    # A genuine context error still stops.
+    ctx, _ = cp._classify_failure(400, "maximum context length is 8192 tokens")
+    assert ctx == "context_length"
+    assert ctx not in cp._ROTATE_KINDS
+
+
+def test_unknown_pricing_is_not_reported_as_zero():
+    """No pricing data must read as unknown, not as free."""
+    sys.modules.pop("server", None)
+    import server as cp
+
+    p = cp.Provider("p", {"base_url": "http://x/v1", "keys": [{"label": "k", "key": "k"}]})
+    p.model_ids = ["m1"]
+    p.model_meta = {"m1": {}}
+    meta = cp._merged_meta(p, "m1")
+    assert meta["metadata"]["pricing"] == {}
+    assert meta["free"] is None
+
+
+async def _load_with(prov, payload):
+    """Run a real load_map() against a canned /models payload."""
+    import server as cp
+
+    class _Resp:
+        status_code = 200
+        def __init__(self, data): self._data = data
+        def json(self): return self._data
+
+    class _Client:
+        def __init__(self, data): self._data = data
+        async def get(self, *a, **k): return _Resp(self._data)
+
+    saved = cp.client
+    cp.client = _Client(payload)
+    try:
+        await prov.load_map()
+    finally:
+        cp.client = saved
+    return prov
+
+
+def test_declared_models_stay_listed_after_live_map():
+    """A declared model missing upstream must not vanish from the catalog.
+
+    allows() already permitted it, so dropping it from model_ids made a model
+    callable but invisible.
+    """
+    sys.modules.pop("server", None)
+    import asyncio
+    import server as cp
+
+    prov = cp.Provider("p", {"base_url": "http://x/v1", "keys": [{"label": "k", "key": "k"}],
+                             "models": ["declared-a", "declared-b", "declared-c"]})
+    asyncio.run(_load_with(prov, {"data": [
+        {"id": "declared-a", "pricing": {"prompt": "0", "completion": "0"}},
+    ]}))
+    assert set(prov.model_ids) == {"declared-a", "declared-b", "declared-c"}
+    assert all(prov.allows(m) for m in prov.model_ids)
+
+
+def test_max_models_blocks_overflow_on_direct_call():
+    """max_models is an access rule, not just a listing cap."""
+    sys.modules.pop("server", None)
+    import asyncio
+    import server as cp
+
+    prov = cp.Provider("p", {"base_url": "http://x/v1", "keys": [{"label": "k", "key": "k"}],
+                             "max_models": 1})
+    asyncio.run(_load_with(prov, {"data": [
+        {"id": "a-model", "pricing": {"prompt": "0", "completion": "0"}},
+        {"id": "z-model", "pricing": {"prompt": "0", "completion": "0"}},
+    ]}))
+    assert prov.model_ids == ["a-model"]
+    assert prov.allows("a-model")
+    assert not prov.allows("z-model"), "capped-out model must not be callable"
+
+
+def test_safe_upstream_path_rejects_traversal():
+    sys.modules.pop("server", None)
+    import server as cp
+
+    assert cp._safe_upstream_path("../../admin/secrets") is None
+    assert cp._safe_upstream_path("https://evil.example.com/x") is None
+    assert cp._safe_upstream_path("//evil.example.com/x") is None
+    assert cp._safe_upstream_path("a/../b") is None
+    assert cp._safe_upstream_path("chat/completions") == "chat/completions"
+    assert cp._safe_upstream_path("./models") == "models"
+
+
+def test_auth_error_uses_openai_envelope(monkeypatch, tmp_path):
+    """401 must look like every other error so clients find error.message."""
+    monkeypatch.setenv("PROXY_AUTH_TOKEN", TOKEN)
+    monkeypatch.setenv("KILO_CONFIG_PATH", str(tmp_path / "catalog.json"))
+    sys.modules.pop("server", None)
+    import server as cp
+
+    with TestClient(cp.app) as c:
+        r = c.get("/v1/models", headers={"Authorization": "Bearer wrong-token"})
+        assert r.status_code == 401
+        body = r.json()
+        assert body["error"]["type"] == "unauthorized"
+        assert body["error"]["message"]
+        assert body["error"]["request_id"]
+
+
+def test_xff_ignored_unless_proxy_trusted(monkeypatch):
+    """X-Forwarded-For must not let a caller pick its own rate-limit identity."""
+    monkeypatch.setenv("PROXY_AUTH_TOKEN", TOKEN)
+    sys.modules.pop("server", None)
+    import server as cp
+
+    class FakeReq:
+        def __init__(self, xff, host="10.0.0.5"):
+            self.headers = {"x-forwarded-for": xff} if xff else {}
+            self.client = type("C", (), {"host": host})()
+
+    cp.TRUSTED_PROXIES = []
+    assert cp._client_id(FakeReq("1.1.1.1")) == "10.0.0.5"
+    assert cp._client_id(FakeReq("2.2.2.2")) == "10.0.0.5"
+
+    cp.TRUSTED_PROXIES = ["10.0.0.5"]
+    assert cp._client_id(FakeReq("1.1.1.1")) == "1.1.1.1"
+
+
+def test_empty_catalog_removes_stale_file(monkeypatch, tmp_path):
+    """An empty catalog must not leave previously-served models on disk."""
+    cat = tmp_path / "catalog.json"
+    cat.write_text(json.dumps({"provider": {"customProxy": {"models": {"old/stale": {}}}}}),
+                   encoding="utf-8")
+    monkeypatch.setenv("PROXY_AUTH_TOKEN", TOKEN)
+    monkeypatch.setenv("KILO_CONFIG_PATH", str(cat))
+    sys.modules.pop("server", None)
+    import server as cp
+
+    cp.providers.clear()
+    assert cp._write_catalog() is True
+    assert not cat.exists()
+    assert cp._read_local_models() == {}
+
+
+def test_quota_exhausted_403_reads_as_billing():
+    """Some upstreams answer 403 'Insufficient user quota' instead of 402.
+
+    The key rotates either way, but the kind is what reaches the operator and
+    the logs, so a balance problem must not be reported as a permission one.
+    """
+    sys.modules.pop("server", None)
+    import server as cp
+
+    kind, status = cp._classify_failure(403, "Insufficient user quota, remaining: $0.00")
+    assert (kind, status) == ("billing_required", 402)
+    assert kind in cp._ROTATE_KINDS
+
+    # A genuine permission error keeps its own label.
+    assert cp._classify_failure(403, "You do not have access to this model") == ("forbidden", 403)
+
+
+def test_free_only_provider_refuses_unseen_model():
+    """free-only must not forward a model it never saw upstream.
+
+    A mistyped or paid-but-unlisted id would otherwise be passed through, and
+    the upstream answers 404/403 after the key has already been spent.
+    """
+    sys.modules.pop("server", None)
+    import asyncio
+    import server as cp
+
+    prov = cp.Provider("p", {"base_url": "http://x/v1",
+                             "keys": [{"label": "k", "key": "k"}],
+                             "filter_free": True})
+    asyncio.run(_load_with(prov, {"data": [
+        {"id": "free-m", "pricing": {"prompt": "0", "completion": "0"}},
+        {"id": "paid-m", "pricing": {"prompt": "0.01", "completion": "0.02"}},
+    ]}))
+    assert prov.allows("free-m")
+    assert not prov.allows("paid-m")
+    assert not prov.allows("never-seen-paid"), "unlisted id must be refused"
+
+
+def test_client_errors_do_not_rotate_keys():
+    """404/422 mean the request is wrong; another key cannot fix it."""
+    sys.modules.pop("server", None)
+    import server as cp
+
+    for status in (400, 404, 405, 409, 413, 415, 422):
+        kind, out = cp._classify_failure(status, "bad request")
+        assert kind == "invalid_request", status
+        assert kind not in cp._ROTATE_KINDS, status
+        assert out == status

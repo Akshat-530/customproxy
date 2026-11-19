@@ -18,6 +18,7 @@ See also [.env.example](../.env.example) for a ready-to-copy template.
 | `request_body_log_enabled` | `false` | Log full request bodies (may contain prompts) |
 | `max_request_bytes` | `33554432` | Request size limit (413 above) |
 | `rate_limit_per_minute` | `0` | Local per-client limit (0 = off) |
+| `trusted_proxies` | `[]` | Peers whose `X-Forwarded-For` may be believed for rate limiting. Empty = the header is ignored (it is otherwise caller-controlled). Accepts globs / `re:` patterns. `TRUSTED_PROXIES` env wins |
 | `cors_origins` | `["*"]` | CORS allow-list |
 | `catalog_refresh_seconds` | `600` | Catalog refresh interval (min 60) |
 | `write_catalog` | `true` | Rewrite the catalog file on refresh |

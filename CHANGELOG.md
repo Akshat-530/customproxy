@@ -11,6 +11,38 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   direct call to them upstream, because the dropped ids were never recorded and
   so had no metadata to refuse. Paid ids are now tracked per provider and
   refused with `403 model_filtered`; `manual_models` still bypass the filter.
+- Under `filter_free`, a model the upstream never listed (a typo, or a paid id
+  the filter had dropped) was passed through and failed upstream after spending
+  a key. Such ids are now refused locally with `403 model_filtered`.
+- Error classification let message text override the status code, so a `402`
+  whose body mentioned `max_tokens` was filed as `context_length` and rotation
+  stopped when a fresh key was what was needed. Status codes now win, and
+  rotation is derived from the same kind the client sees.
+- Client-side faults (`404`, `405`, `409`, `413`, `415`, `422`) were treated as
+  `upstream_error` and rotated every key, although no key can change the
+  outcome. They now map to `invalid_request` and stop.
+- An exhausted balance reported as `403 "Insufficient user quota"` was labelled
+  `forbidden`; a billing phrase now outranks the bare `forbidden` reading.
+- Models with no pricing data were published with pricing `"0"`, claiming they
+  were free. Unknown pricing is now empty and `free` stays `null`.
+- Declared `models` that the upstream omitted still passed `allows()` but were
+  missing from the catalog, so a model could be callable yet invisible. The
+  catalog and the access check now agree.
+- `max_models` only trimmed the list; the capped-out ids stayed callable. They
+  are now refused on direct calls as well.
+- An empty catalog left the previous file on disk, so a withdrawn model kept
+  being advertised. The stale file is now removed.
+- A failed `chmod` after the atomic catalog replace aborted the write and
+  retried every refresh; it is now logged and ignored.
+- `X-Forwarded-For` was believed from any caller, allowing rate-limit
+  identities to be spoofed. It is honoured only for peers in `trusted_proxies`
+  (`TRUSTED_PROXIES` env overrides), and ignored otherwise.
+- Auth failures returned `{"detail": ...}` instead of the OpenAI-shaped
+  `{"error": {...}}` body; they now carry `message`, `type`, `code` and
+  `request_id` like every other error.
+- Upstream paths are validated before a request is built: `..` segments,
+  absolute URLs and protocol-relative paths are rejected with
+  `400 invalid_request` (`invalid_path`), closing a path-traversal gap.
 
 ### Changed
 - `customproxy-connect-harness` is the only skill that reads or edits a harness
