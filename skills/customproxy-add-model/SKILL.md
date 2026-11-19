@@ -4,9 +4,9 @@ description: >-
   Add a model to the CustomProxy catalog. Use when the user says "add this
   <model> by <provider>" or wants to expose a specific model through
   CustomProxy (127.0.0.1:<port>). Researches the model, builds an approval
-  table, whitelists it, verifies it with a minimal-token call, and reports
-  follow-up steps for other harnesses (Kilo, OpenCode, etc.). Part of the
-  CustomProxy skill chain: add-provider → add-api-key → add-model.
+  table, whitelists it, and verifies it with a minimal-token call. Part of
+  the CustomProxy skill chain: add-provider → add-api-key → add-model. Does
+  not edit harness configs; hand that to customproxy-connect-harness.
 ---
 
 
@@ -226,13 +226,10 @@ Reply with:
    the log line, e.g. `usage: 14 tokens`).
 2. The approval table's key facts (context, tier, pricing/limits) as a short
    summary.
-3. **Harness follow-up warning**, verbatim:
-
-> The model is now live in CustomProxy. If you use it through another harness
-> (Kilo, OpenCode, etc.) you may also need to add it to that harness's own
-> config - CustomProxy's catalog at
-> `http://127.0.0.1:<port>/.well-known/opencode` can be consumed by those tools,
-> but each harness keeps its own model list/selection.
+3. **Harness follow-up:** the model is live in CustomProxy. Do **not** touch
+   any harness configuration here. If the user wants their editor/CLI to see
+   it, tell them to run the **customproxy-connect-harness** skill - it is the
+   only skill that edits harness files.
 
 4. If `max_models` was raised or an exclude pattern was changed, mention it.
 

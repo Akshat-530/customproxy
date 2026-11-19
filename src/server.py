@@ -521,6 +521,10 @@ class Provider:
             self.alias_to_id.setdefault(mid.replace("/", "-"), mid)
             if mid not in self.model_ids: self.model_ids.append(mid)
             self.model_meta[mid] = self.manual_meta[mid]
+        # Model ids known to be paid, recorded even though they are dropped
+        # from the catalog, so a direct call to one is refused instead of
+        # being forwarded just because it has no metadata.
+        self._paid_blocked: set[str]=set()
         self._last_map=0.0; self._last_attempt=0.0; self._map_attempts=0
     def _hit(self, mid: str, patterns) -> bool:
         """Filters accept either the upstream id or the catalog id."""
@@ -532,6 +536,7 @@ class Provider:
         if self.include_models and not self._hit(mid, self.include_models): return False
         if self.exclude_models and self._hit(mid, self.exclude_models): return False
         if self.filter_free:
+            if mid in getattr(self, "_paid_blocked", ()): return False
             meta = self.model_meta.get(mid) or {}
             if meta.get("free") is False: return False
         return True
@@ -552,7 +557,7 @@ class Provider:
                 debug_log.record("map_fail", provider=self.name, key=entry["label"], error="bad_payload")
                 log.warning("[%s] /models returned a non-list payload; keeping previous map", self.name)
                 continue
-            mapping={}; model_ids=[]; metas={}
+            mapping={}; model_ids=[]; metas={}; paid=set()
             for m in models:
                 if not isinstance(m, dict): continue
                 mid=m.get("id","")
@@ -564,7 +569,8 @@ class Provider:
                     free=_is_free_model(m)
                     # Only drop models positively known to be paid; if the
                     # upstream exposes no pricing, keep it instead of hiding it.
-                    if free is False: continue
+                    if free is False:
+                        paid.add(mid); paid.add(mid.replace("/","-")); continue
                 model_ids.append(mid); mapping[mid]=mid; mapping[mid.replace("/","-")]=mid
                 metas[mid]=_upstream_meta(m)
             if self.max_models and len(model_ids) > self.max_models:
@@ -581,6 +587,10 @@ class Provider:
                 if mid not in mapping:
                     mapping[mid]=mid; mapping[mid.replace("/","-")]=mid; model_ids.append(mid)
                 metas.setdefault(mid, self.manual_meta.get(mid) or {})
+            # Hand-added models bypass every filter, including the free one.
+            for mid in self.manual_ids:
+                paid.discard(mid); paid.discard(mid.replace("/","-"))
+            self._paid_blocked=paid
             self.alias_to_id=mapping; self.model_ids=model_ids; self.model_meta=metas; self._last_map=time.time()
             debug_log.record("map_ok", provider=self.name, models=len(model_ids), key=entry["label"])
             log.info("[%s] routing map loaded: %d model ids", self.name, len(model_ids)); return

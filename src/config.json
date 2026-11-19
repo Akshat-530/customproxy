@@ -40,7 +40,8 @@
       "max_models": 0,
       "keys_env": "NVIDIA_API_KEYS",
       "enabled": true,
-      "manual_models": []
+      "manual_models": [],
+      "filter_free": true
     },
     "agnes": {
       "base_url": "https://apihub.agnes-ai.com/v1",

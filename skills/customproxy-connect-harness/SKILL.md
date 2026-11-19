@@ -1,116 +1,147 @@
 ---
 name: customproxy-connect-harness
 description: >-
-  Connect a coding harness (Kilo Code, Kilo desktop, OpenCode, Claude Code,
-  Cursor, Cline, Continue, or any OpenAI-compatible tool) to the running
-  CustomProxy so the user can chat with its models directly. Use when the
-  user says "connect my harness to CustomProxy", "wire CustomProxy into
-  opencode/kilo", "use CustomProxy in my editor", or asks which base URL/key
-  to use. Researches the harness's config format, wires it up, and verifies.
+  The single skill responsible for connecting any coding harness to a running
+  CustomProxy. Use when the user says "connect CustomProxy to opencode/kilo",
+  "use CustomProxy in my editor", "wire up Claude Code/Cursor/Cline/Continue",
+  or asks which base URL, key, and model ids to use. This is the ONLY skill
+  that reads or edits harness configuration files; the add-* skills never
+  touch them.
 ---
 
 
-## Finding the deployment (portability)
+## Scope: this skill owns harness config, nothing else
 
-All paths in this skill are written as `<customproxy-dir>`. Resolve it at
-runtime, in this order:
+CustomProxy itself is configured through `src/config.json` and `.env` by the
+`customproxy-add-*` / `customproxy-remove` skills. **Those skills must never
+edit a harness file, and this skill must never edit CustomProxy's files.**
 
-1. The folder containing this `skills/<skill-name>/` directory (go up two
-   levels; the deployment sits beside `skills/`).
-2. If not found there, search: `Get-ChildItem -Path . -Recurse -Filter
-   "compose.yml" -Depth 4 | Where-Object { $_.DirectoryName -match
-   "customproxy" }` from the current working directory.
-3. Never assume a fixed drive letter or user path - the deployment may live
-   anywhere: Windows, macOS, Linux, or WSL.
+If the harness lacks a provider or model, do not fix it here - send the user
+to `customproxy-add-provider` / `customproxy-add-model` / `customproxy-add-api-key`,
+then come back.
 
-The proxy's host port is published by `compose.yml` (default `3001`).
-Discover it at runtime instead of assuming: `docker port CustomProxy
-3001/tcp`). Base URL is `http://127.0.0.1:<port>/v1`.
+No code in this repository writes to a harness config. Every change below is
+made by the agent, on the host, with the user's approval.
 
-Everything else in this skill is relative to `<customproxy-dir>`: config at
-`src/config.json`, secrets at `.env`, catalog at `state/kilo_models.json`,
-logs at `logs/requests.jsonl`, compose file at `compose.yml`.
+## Finding the deployment and its port
 
-# CustomProxy - Connect a Harness
+Resolve `<customproxy-dir>` at runtime - never assume a drive letter:
 
-Deployment: `<customproxy-dir>` - container `CustomProxy`,
-port `127.0.0.1:<port>`, OpenAI-compatible on `/v1` and without the prefix.
+1. The folder two levels above this `skills/<skill-name>/` directory.
+2. Otherwise ask the user where they cloned the repo.
 
-**Never print** the harness's existing API keys or the proxy token.
+Resolve the port, don't assume it. In order:
 
----
-
-## Step 0 - What CustomProxy exposes (constants)
-
-| Value | Where it comes from |
-|---|---|
-| Base URL | `http://127.0.0.1:<port>/v1` (most OpenAI-compatible clients) |
-| API key | `PROXY_AUTH_TOKEN` from `<customproxy-dir>\.env` |
-| Model catalog | `GET http://127.0.0.1:<port>/v1/models` (token) - 347 models, `provider/upstream-id` format |
-| Kilo/OpenCode-ready JSON | `GET http://127.0.0.1:<port>/.well-known/opencode` - a `{"provider":{"customProxy":{"models":{...}}}}` block, auto-updated |
-| Note | Local-only by design: port binds to `127.0.0.1`, never exposed to the internet |
-
-Read the token without printing it:
-
-```powershell
-Set-Location "<customproxy-dir>"
-$tok = (Get-Content .env | Where-Object { $_ -match '^PROXY_AUTH_TOKEN=' }) -replace '^PROXY_AUTH_TOKEN=',''
-"token length: $($tok.Length)"   # never the value
+```bash
+# 1. what compose actually published
+docker port customproxy 3001/tcp        # e.g. 127.0.0.1:3001
+# 2. fallback: the .env value
+grep -E '^PROXY_HOST_PORT=' <customproxy-dir>/.env
+# 3. fallback: the default
+#    3001
 ```
 
-## Step 1 - Ask which harness
+The port inside the container is always `3001`; only the published host port
+varies. Use `<port>` everywhere below.
 
-If not stated, ask: *"Which harness are you connecting? (Kilo Code VS Code,
-Kilo desktop CLI, OpenCode, Claude Code, Cursor, Cline, Continue, other…)"*
+## Step 1 - Identify the harness
 
-Then research that harness's **current** config format with the harness's web
-tools (formats drift - verify before editing):
+If the user did not say, ask which one they are connecting. Then confirm the
+current config format from **that harness's own documentation** - formats
+change, so verify rather than rely on memory.
 
-- **OpenCode** → `opencode.json` (global: `~/.config/opencode/opencode.json`,
-  or project root). Custom OpenAI-compatible block:
-  `provider.<id>.npm = "@ai-sdk/openai-compatible"`, `options.baseURL`,
-  `options.apiKey` (supports `{env:VAR}`), optional `models` map, default
-  `model: "<provider-id>/<model-id>"`.
-- **Kilo Code (VS Code)** → Settings → API Provider → **OpenAI Compatible**
-  → Base URL + API Key + model picker (auto-fetches `/v1/models`). Or
-  `kilo.jsonc` `customProvider` entries (`api`, `npm`,
-  `@ai-sdk/openai-compatible`, `options.apiKey/baseURL`, `models` with
-  `tool_call`/`limit`).
-- **Kilo desktop CLI** → `~/.config/kilo/kilo.jsonc` (JSONC - comments and
-  trailing commas allowed). This deployment already ships a compatible
-  `/.well-known/opencode` document.
-- **Claude Code** → env vars (`ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN`)
-  for Anthropic-shape traffic; for OpenAI-shape tools use whatever client the
-  user runs - confirm with docs first.
-- **Cursor / Cline / Continue** → their OpenAI-compatible override fields.
+| Harness | Config location | Shape |
+|---|---|---|
+| Kilo desktop CLI | `~/.config/kilo/kilo.jsonc` (`%USERPROFILE%\.config\kilo\kilo.jsonc`) | JSONC, `provider.<id>` blocks |
+| Kilo Code (VS Code) | extension settings UI | OpenAI-compatible base URL + key + model |
+| OpenCode | `~/.config/opencode/opencode.json` or project root | `provider.<id>` with `npm: "@ai-sdk/openai-compatible"` |
+| Claude Code | environment variables | `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN` (Anthropic shape only) |
+| Cursor / Cline / Continue | their OpenAI-compatible override fields | base URL + key |
+| Anything else | ask the user for a sample config | OpenAI-compatible base URL + key |
 
-## Step 2 - Inspect the harness's current config (structure only)
+## Step 2 - Verify the proxy is healthy first
 
-Find the config file, then show **structure only** - provider names, base
-URLs, model counts. Mask any key value (`first4...last2`). Example JSONC
-inspection for Kilo:
+Never wire a harness to a proxy that is not serving. Check, in this order:
 
-```powershell
-# JSONC is JSON with comments - strip comments/trailing commas before parsing
+```bash
+curl -s http://127.0.0.1:<port>/health          # expect "status":"ok"
+curl -s -o /dev/null -w '%{http_code}\n' \
+     -H "Authorization: Bearer $PROXY_AUTH_TOKEN" \
+     http://127.0.0.1:<port>/v1/models           # expect 200
 ```
 
-Report what you find, e.g.:
+If `/health` is not `ok`, stop and report the exact error. Do not edit a
+harness to work around a broken proxy.
 
-- `providers: customProxy, kilo, kiloGateway`
-- `customProxy.baseURL = http://127.0.0.1:3001/v1` (old proxy?) → flag it
-- `customProxy.models: 32` → stale catalog?
+Read the two values you will wire in, without printing the secret:
 
-## Step 3 - Present the wiring plan (wait for approval)
+```bash
+# token: read from .env, never echo it
+grep -E '^PROXY_AUTH_TOKEN=' <customproxy-dir>/.env
+# catalog size (for the report)
+curl -s -H "Authorization: Bearer $PROXY_AUTH_TOKEN" \
+     http://127.0.0.1:<port>/v1/models | python3 -c \
+     "import json,sys;print(len(json.load(sys.stdin)['data']))"
+```
 
-Show what will change before touching anything. Typical plan for Kilo:
+## Step 3 - Inspect the existing config (structure only)
+
+Show the shape, never the secrets:
+
+- provider ids present
+- each provider's `baseURL` / `base_url`
+- model count
+- mask every key as `first4...last2`
+
+```powershell
+# JSONC: strip // and /* */ comments and trailing commas before parsing
+```
+
+Flag anything already pointing at CustomProxy with a **stale port**, a
+**stale token**, or a **stale model list**.
+
+## Step 4 - Present the plan, then wait for approval
+
+Show a before/after table, then stop and wait. Editing harness config is a
+user-visible change to their tooling.
 
 | Item | Before | After |
 |---|---|---|
-| `provider.customProxy.options.baseURL` | old value | `http://127.0.0.1:<port>/v1` |
-| `provider.customProxy.options.apiKey` | old token | CustomProxy `PROXY_AUTH_TOKEN` (same `hhSK…` value already in use) |
-| `provider.customProxy.models` | 32 entries | 347 entries from `/.well-known/opencode` |
+| `provider.customProxy.options.baseURL` | *(current)* | `http://127.0.0.1:<port>/v1` |
+| `provider.customProxy.options.apiKey` | *(current)* | this deployment's `PROXY_AUTH_TOKEN` |
+| `provider.customProxy.models` | *(current)* | catalog from `/.well-known/opencode` |
 
-For OpenCode:
+Raise these before writing:
+
+- **Port conflict** - if the harness already points at another
+  OpenAI-compatible endpoint, ask whether to add CustomProxy as an extra
+  provider (keeping the old one) or replace it. Never overwrite silently.
+- **Key continuity** - confirm the token in the harness is the one in this
+  deployment's `.env`; a mismatch shows up later as a 401.
+- **JSONC comment loss** - a naive rewrite of `kilo.jsonc` drops comments.
+  Warn, back up first, and use a comment-aware merge where possible.
+- **UI-only harnesses** - hand the user the two values plus model ids to paste;
+  never write into app-managed stores.
+
+## Step 5 - Apply, with a backup
+
+Back up the harness config before touching it:
+
+```
+<customproxy-dir>/Backups/harness_<name>_<YYYYmmdd_HHMMSS>/
+```
+
+Then write. Requirements for every write:
+
+- valid syntax - re-parse the file afterwards
+- UTF-8 **without BOM** (`UTF8Encoding($false)` in PowerShell)
+- preserve unrelated providers and the user's own settings
+- `apiKey` may reference an env var (`{env:PROXY_AUTH_TOKEN}`) where supported
+  - prefer that over embedding the literal token
+
+Reference blocks:
+
+**OpenCode** (`opencode.json`)
 
 ```json
 {
@@ -118,7 +149,10 @@ For OpenCode:
     "customproxy": {
       "npm": "@ai-sdk/openai-compatible",
       "name": "CustomProxy",
-      "options": { "baseURL": "http://127.0.0.1:<port>/v1", "apiKey": "{env:PROXY_AUTH_TOKEN}" },
+      "options": {
+        "baseURL": "http://127.0.0.1:<port>/v1",
+        "apiKey": "{env:PROXY_AUTH_TOKEN}"
+      },
       "models": { "<model-id>": { "name": "<label>" } }
     }
   },
@@ -126,83 +160,83 @@ For OpenCode:
 }
 ```
 
-Warn when relevant:
-- **Port conflict:** if the harness already points at another OpenAI-compatible
-  endpoint, confirm which one should serve requests. Ask: keep both (add a
-  second provider block) or replace?
-- **Key continuity:** confirm the token in the harness matches
-  `PROXY_AUTH_TOKEN` from this deployment's `.env`.
-- **Windows JSONC safety:** editing `kilo.jsonc` strips comments unless the
-  tool is comment-aware. Prefer preserving comments; if a rewrite would lose
-  them, say so and back up first.
-- If a harness only accepts a base URL + key in its UI (VS Code extension),
-  give the user the exact two values to paste and the model ids to select -
-  do not edit extension-managed files blindly.
+**Kilo / Kilo Code** (`kilo.jsonc` provider block)
 
-## Step 4 - Wire it up (on approval)
-
-Preferred: **edit the config file** on the host.
-
-- Kilo CLI (`~/.config/kilo/kilo.jsonc`): merge the new/updated
-  `provider.customProxy` block - keep user comments where possible, atomic
-  write, backup first. Simplest robust path: update `options.baseURL` +
-  `options.apiKey`, and **replace** the `models` object with the fetched
-  catalog (or leave models to the harness if it fetches them itself).
-- OpenCode (`~/.config/opencode/opencode.json`): add/replace the
-  `customproxy` provider block and the default `model` (ask which model).
-- UI-only harnesses: print the exact values for the user to paste
-  (base URL, key, model ids) - never write into app-managed stores.
-
-Fetch the fresh catalog for the models block:
-
-```powershell
-Invoke-RestMethod "http://127.0.0.1:<port>/.well-known/opencode" -OutFile "$env:TEMP\cp-catalog.json"
-# merge $catalog.provider.customProxy.models into the harness config
+```jsonc
+{
+  "provider": {
+    "customProxy": {
+      "npm": "@ai-sdk/openai-compatible",
+      "options": {
+        "baseURL": "http://127.0.0.1:<port>/v1",
+        "apiKey": "{env:PROXY_AUTH_TOKEN}"
+      }
+      // "models": fetched from /.well-known/opencode, or left for the harness
+    }
+  }
+}
 ```
 
-Before every write: back up the harness config to
-`<customproxy-dir>\Backups\harness_<name>_<stamp>\`. After writing:
-re-parse the file to prove valid syntax, and check it is BOM-free.
+**Anthropic-shaped tools** (Claude Code)
 
-## Step 5 - Verify the harness actually works
+```bash
+ANTHROPIC_BASE_URL=http://127.0.0.1:<port>
+ANTHROPIC_AUTH_TOKEN=<PROXY_AUTH_TOKEN>
+```
 
-1. **Proxy side (no harness needed):**
-   `GET /health` → `status=ok`; `GET /v1/models` → model count.
-2. **Config side:** the harness config parses and contains the right
-   `baseURL`, `apiKey` reference, and models.
-3. **End-to-end chat:** run the harness's own CLI non-interactively
-   (`opencode run "say hi"` style) or ask the user to send one chat message
-   and confirm a reply. If the harness logs errors, quote them exactly.
-4. **Model reachability:** pick the user's intended model and send a minimal
-   request via the proxy directly first (8 tokens) so failures are attributed
-   to config, not the model.
+Fetch a ready-made model map:
 
-Common failure → meaning table:
+```bash
+curl -s http://127.0.0.1:<port>/.well-known/opencode -o catalog.json
+# merge catalog.provider.customProxy.models into the harness block
+```
 
-| Symptom | Likely cause |
-|---|---|
-| 401 unauthorized | harness key ≠ `PROXY_AUTH_TOKEN` |
-| 404 unknown provider | model id missing the `provider/` prefix |
-| connection refused | proxy container down (`docker ps`) or wrong port |
-| model returns 403 model_filtered | model not whitelisted (add-model skill) |
-| 402 / 429 | billing / rate limit on the upstream provider |
+## Step 6 - Prove it works end to end
 
-## Step 6 - Report
+Do all four; a config that parses is not a config that works.
 
-- Harness + config file path edited (or UI values to paste).
-- Base URL + which key variable, model default set.
-- Catalog size wired in (e.g. 347 models) and where it auto-refreshes.
-- Backup location of the pre-change harness config.
-- Any follow-ups (restart the harness/app, `/models` command in OpenCode,
-  reload VS Code).
+1. **Proxy reachable** - `/health` is `ok`.
+2. **Config valid** - the file parses; baseURL, apiKey reference, and model
+   default are present.
+3. **Direct call through the proxy** - minimal request so a failure is
+   attributable to the proxy, not the harness:
+
+```bash
+curl -s -X POST http://127.0.0.1:<port>/v1/chat/completions \
+  -H "Authorization: Bearer $PROXY_AUTH_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"<provider>/<model-id>","messages":[{"role":"user","content":"hi"}],"max_tokens":8}'
+```
+
+4. **Through the harness** - run its own non-interactive command where it has
+   one, or ask the user to send one message and confirm a reply.
+
+## Failure table
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| 401 unauthorized | harness key ≠ `PROXY_AUTH_TOKEN` | copy the token from `.env` again |
+| 404 unknown provider | model id missing `provider/` prefix | use `<provider>/<model>` from `/v1/models` |
+| 403 model_filtered | model not whitelisted | `customproxy-add-model` |
+| 503 no_keys | provider has no key | `customproxy-add-api-key` |
+| 429 all_keys_cooling | every key rate-limited | wait, or add another key |
+| connection refused | container down or wrong port | `docker ps`, `docker port customproxy 3001/tcp` |
+| empty model list | no provider has a key yet | add a key, then `/refresh` |
+
+## Step 7 - Report
+
+- Harness + config path edited (or the values to paste, for UI-only tools).
+- Base URL and port used, and how it was discovered.
+- Model count wired in, and whether the harness fetches models itself.
+- Backup directory of the pre-change config.
+- What the user must restart (the app, a reload, `/models` in OpenCode).
 
 ## Safety rules
 
-- Never print keys or tokens; masked only.
-- Never point a harness at a different deployment without explicit approval
-  - confirm which base URL should serve requests first.
-- Back up before every harness config edit; rollback = restore + reparse.
-- JSONC: preserve comments where possible; if the write loses them, say so.
-- BOM-free writes only (`UTF8Encoding($false)`).
-- If the harness's config format can't be confirmed from docs, say so and ask
-  the user for a sample config rather than guessing.
+- Never print a key or token; masked only.
+- Back up before every harness edit; rollback = restore + re-parse.
+- Never edit CustomProxy's `src/config.json` or `.env` from this skill.
+- Never point the harness at a deployment you have not checked with `/health`.
+- Never write into an application-managed store you cannot restore.
+- If the config format cannot be confirmed from docs, ask the user for a
+  sample instead of guessing.

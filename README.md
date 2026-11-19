@@ -37,6 +37,7 @@ CustomProxy :3001  ──►  provider 1 (keys k1..kN, rotated)
 | Any base URL | Works with `/v1` or without it |
 | Key rotation | Per-provider pools, rotate on 401/402/403/429/5xx, escalating cooldown, `Retry-After` honoured |
 | Dynamic catalog | Discovers all models from each provider's `/models`, refreshes every `CATALOG_REFRESH_SECONDS`, writes `kilo_models.json` |
+| Free-model auto-discovery | `filter_free` providers expose **only** free models, discovered live — no sync script, no static list. Pre-enabled for `kilo`, `nvidia`, `openrouter`; opt in per provider anywhere else |
 | Model filters | `models` / `include_models` / `exclude_models` (globs + `re:` regex) / `max_models` / `filter_free`, enforced on the catalog **and** direct calls |
 | Provider filters | `provider_filters` + per-provider `enabled: false` |
 | Env-defined providers | `CUSTOM_PROVIDERS_JSON` lets users add providers without editing config |
@@ -148,7 +149,7 @@ CUSTOM_PROVIDERS_JSON=[{"name":"myprovider","base_url":"https://api.example.com/
 | `models` | exact ids or globs; empty = discover everything |
 | `include_models` | must match one pattern to be kept |
 | `exclude_models` | matching models are dropped (catalog + calls → `403 model_filtered`) |
-| `filter_free` | drop models positively known to be paid |
+| `filter_free` | keep only models positively known to be free; paid ones are dropped from the catalog **and** blocked on direct calls (`403 model_filtered`). Unknown-pricing models are kept |
 | `max_models` | cap the catalog (free models first, then alphabetical) |
 
 Precedence: `models` → `include_models` → `exclude_models` → `filter_free` → `max_models`.

@@ -234,9 +234,9 @@ Reply with:
 - End-to-end test table: each step pass/fail, plus one log line
   (`outcome`, `model`, `api_key_id`, `duration_ms`).
 - Whitelist summary (patterns set, or "open discovery").
-- Reminder: keys live in `.env` (gitignored) and never in `config.json`;
-  if using Kilo/OpenCode, their own configs may need the new models too
-  (see add-model skill's warning).
+- Reminder: keys live in `.env` (gitignored) and never in `config.json`.
+  Harness wiring is **not** done here - direct the user to
+  **customproxy-connect-harness**, the only skill that edits harness files.
 
 ## Removal
 

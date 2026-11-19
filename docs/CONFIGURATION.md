@@ -65,7 +65,7 @@ Environment overrides: `PROXY_PORT`, `PROXY_HOST_PORT` (compose port mapping),
 | `exclude_models` | Dropped from catalog **and blocked on calls** (`403 model_filtered`) |
 | `max_models` | Catalog cap, free models first (catalog-only, not access) |
 | `manual_models` | Hand-added models; bypass filters, survive refreshes |
-| `filter_free` | Drop models positively known to be paid |
+| `filter_free` | Auto-discover free models only. Paid models are dropped from the catalog and blocked on direct calls; models with no pricing data are kept (they cannot be proven paid) |
 
 Patterns are `fnmatch` globs (case-insensitive) or `re:<regex>`, and match the
 **upstream id or the catalog id** (`deepseek-*` and `myprovider/deepseek-*`

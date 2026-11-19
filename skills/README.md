@@ -14,8 +14,24 @@ add-provider  ->  add-api-key  ->  add-model  ->  connect-harness  ->  E2E test
 | [`customproxy-add-provider`](customproxy-add-provider/SKILL.md) | "add provider together.ai", "support api.x.ai" | `src/config.json` provider block, `XY_API_KEYS=` in `.env`, `.env.example` |
 | [`customproxy-add-api-key`](customproxy-add-api-key/SKILL.md) | "add this API key", "rotate this key in" | `XY_API_KEYS=label=key` in `.env` (backed up) |
 | [`customproxy-add-model`](customproxy-add-model/SKILL.md) | "add this \<model\> by \<provider\>" | `models` / `include_models` / `exclude_models` / `max_models` / `manual_models` |
-| [`customproxy-connect-harness`](customproxy-connect-harness/SKILL.md) | "connect CustomProxy to opencode/kilo", "use it in my editor" | harness config (`kilo.jsonc`, `opencode.json`, or UI values) |
+| [`customproxy-connect-harness`](customproxy-connect-harness/SKILL.md) | "connect CustomProxy to opencode/kilo", "use it in my editor" | **only** skill allowed to read/edit a harness config (`kilo.jsonc`, `opencode.json`, or UI values) |
 | [`customproxy-remove`](customproxy-remove/SKILL.md) | "remove \<model\>", "drop provider X", "delete this key" | removes from filters / provider block / `.env` pool (backed up) |
+
+## Ownership: who may write what
+
+The skills divide cleanly so two of them can never fight over the same file:
+
+| Target | Only this skill may edit it |
+|---|---|
+| `src/config.json` (providers, filters) | `add-provider`, `add-model`, `remove` |
+| `.env` / `.env.example` (keys, token, ports) | `add-api-key`, `add-provider`, `remove` |
+| Generated catalog + logs | **no skill** - the server writes these itself |
+| A harness config (`kilo.jsonc`, `opencode.json`, UI settings) | **`customproxy-connect-harness` only** |
+| Anything else in the repo | no skill writes it |
+
+`add-provider` / `add-api-key` / `add-model` therefore end by *pointing* the
+user at `customproxy-connect-harness` if their harness needs wiring; they
+never touch a harness file themselves.
 
 ## Shared contract (all five skills)
 
@@ -63,3 +79,16 @@ Run `customproxy-connect-harness`. Quick reference:
 | API key | `PROXY_AUTH_TOKEN` from `.env` |
 | Model ids | `<provider>/<model-id>` (see `/v1/models`) |
 | Catalog (auto-updating) | `http://127.0.0.1:<port>/.well-known/opencode` |
+
+## Free models need no setup
+
+`kilo`, `nvidia`, and `openrouter` ship with `filter_free: true`, so the proxy
+discovers and lists **only free models** for them on every catalog refresh.
+There is no sync script and no static list to maintain: add one key and the
+free catalog appears.
+
+For any other provider that exposes free models, set `filter_free: true` on
+its block (that is what `customproxy-add-provider` writes when you ask for a
+free-only provider). Paid models are then dropped from the catalog *and*
+refused on direct calls; models with no pricing data are kept, because they
+cannot be proven paid.
