@@ -1,0 +1,218 @@
+{
+  "proxy_name": "Custom Model Proxy in Model_Providers container",
+  "proxy_port": 3001,
+  "auth_token": "",
+  "kilo_config_path": "/state/kilo_models.json",
+  "providers": {
+    "tokenharbor": {
+      "base_url": "https://tokenharbor.ai/v1",
+      "priority": 1,
+      "keys": [],
+      "models": [],
+      "reasoning_auto": true,
+      "reasoning_default": "medium",
+      "reasoning_levels": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "include_models": [],
+      "exclude_models": [],
+      "max_models": 0,
+      "keys_env": "TOKENHARBOUR_API_KEYS",
+      "enabled": true,
+      "manual_models": []
+    },
+    "nvidia": {
+      "base_url": "https://integrate.api.nvidia.com/v1",
+      "priority": 2,
+      "keys": [],
+      "models": [],
+      "reasoning_auto": true,
+      "reasoning_default": "medium",
+      "reasoning_levels": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "include_models": [],
+      "exclude_models": [],
+      "max_models": 0,
+      "keys_env": "NVIDIA_API_KEYS",
+      "enabled": true,
+      "manual_models": []
+    },
+    "agnes": {
+      "base_url": "https://apihub.agnes-ai.com/v1",
+      "priority": 3,
+      "keys": [],
+      "models": [],
+      "reasoning_auto": true,
+      "reasoning_default": "medium",
+      "reasoning_levels": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "include_models": [],
+      "exclude_models": [],
+      "max_models": 0,
+      "keys_env": "AGNES_API_KEYS",
+      "enabled": true,
+      "manual_models": []
+    },
+    "google": {
+      "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+      "priority": 4,
+      "keys": [],
+      "models": [],
+      "reasoning_auto": true,
+      "reasoning_default": "medium",
+      "reasoning_levels": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "include_models": [],
+      "exclude_models": [],
+      "max_models": 0,
+      "keys_env": "GEMINI_API_KEYS",
+      "enabled": true,
+      "manual_models": []
+    },
+    "kilo": {
+      "base_url": "https://ai-gateway.kilo.ai/api/v1",
+      "priority": 5,
+      "filter_free": true,
+      "keys": [],
+      "models": [],
+      "reasoning_auto": false,
+      "reasoning_default": "medium",
+      "reasoning_levels": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "include_models": [],
+      "exclude_models": [],
+      "max_models": 0,
+      "keys_env": "KILO_API_KEYS",
+      "enabled": true,
+      "manual_models": []
+    },
+    "apinex": {
+      "base_url": "https://api.apinex.bond/v1",
+      "priority": 6,
+      "keys": [],
+      "models": [],
+      "reasoning_auto": true,
+      "reasoning_default": "medium",
+      "reasoning_levels": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "include_models": [],
+      "exclude_models": [],
+      "max_models": 0,
+      "keys_env": "APINEX_API_KEYS",
+      "enabled": true,
+      "manual_models": []
+    },
+    "100milionseek": {
+      "base_url": "https://100milionseek.top/v1",
+      "priority": 7,
+      "keys": [],
+      "models": [],
+      "reasoning_auto": true,
+      "reasoning_default": "medium",
+      "reasoning_levels": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "include_models": [],
+      "exclude_models": [],
+      "max_models": 0,
+      "keys_env": "MILLIONSEEK_API_KEYS",
+      "enabled": true,
+      "manual_models": []
+    },
+    "teamorouter": {
+      "base_url": "https://api.teamorouter.com/v1",
+      "priority": 8,
+      "keys": [],
+      "models": [],
+      "reasoning_auto": true,
+      "reasoning_default": "medium",
+      "reasoning_levels": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "include_models": [],
+      "exclude_models": [],
+      "max_models": 0,
+      "keys_env": "TEAMOROUTER_API_KEYS",
+      "enabled": true,
+      "manual_models": []
+    },
+    "zro": {
+      "base_url": "https://zro.moonmath.ai/v1",
+      "priority": 9,
+      "keys": [],
+      "models": [],
+      "reasoning_auto": true,
+      "reasoning_default": "medium",
+      "reasoning_levels": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "include_models": [],
+      "exclude_models": [],
+      "max_models": 0,
+      "keys_env": "ZRO_API_KEYS",
+      "enabled": true,
+      "manual_models": []
+    },
+    "openrouter": {
+      "base_url": "https://openrouter.ai/api/v1",
+      "keys_env": "OPENROUTER_API_KEYS",
+      "models": [],
+      "filter_free": true,
+      "reasoning_auto": true,
+      "reasoning_default": "medium",
+      "reasoning_levels": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "include_models": [],
+      "exclude_models": [],
+      "max_models": 0,
+      "keys": [],
+      "keys_json_env": "OPENROUTER_API_KEYS_JSON",
+      "enabled": true,
+      "manual_models": []
+    }
+  },
+  "catalog_refresh_seconds": 600,
+  "write_catalog": true,
+  "request_log_enabled": true,
+  "request_log_entries": 2000,
+  "request_log_jsonl": "/logs/requests.jsonl",
+  "request_log_jsonl_max_bytes": 67108864,
+  "request_body_log_enabled": false,
+  "debug_enabled": false,
+  "allow_no_auth": false,
+  "max_request_bytes": 33554432,
+  "rate_limit_per_minute": 0,
+  "cors_origins": [
+    "*"
+  ],
+  "provider_filters": {
+    "include": [],
+    "exclude": []
+  }
+}

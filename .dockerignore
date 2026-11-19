@@ -1,0 +1,17 @@
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+
+# Runtime output
+state/
+logs/
+*.log
+*.tmp
+
+# Dev artifacts
+tests/
+.github/
+__pycache__/
+*.pyc
+compose.test.yml

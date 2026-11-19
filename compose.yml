@@ -1,0 +1,66 @@
+# ============================================================================
+# CustomProxy — standalone container (independent from Model_Providers)
+#
+#   docker compose up -d --build
+#   -> http://127.0.0.1:3101/v1
+#
+# Everything this container needs lives in this directory. It never mounts or
+# touches the Model_Providers project.
+# ============================================================================
+name: customproxy
+
+services:
+  customproxy:
+    build: .
+    image: customproxy:latest
+    container_name: CustomProxy
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # Only enough to chown the writable mounts and drop to `app`.
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
+    pids_limit: 256
+    stop_grace_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    env_file: .env
+    environment:
+      - KEY_ROTATE_SERVICES=tavily,firecrawl,gemini,tokenharbour,context7,zro
+      - KEY_PROXY_DEBUG=0
+      - CATALOG_REFRESH_SECONDS=${CATALOG_REFRESH_SECONDS:-600}
+    ports:
+      - "127.0.0.1:3101:3001"
+    volumes:
+      - ./key_rotate_proxy.py:/app/key_rotate_proxy.py:ro
+      - ./src:/app/customproxy:ro
+      - ./state:/state
+      - ./logs:/logs
+      - ./run-services.sh:/usr/local/bin/model-providers-services.sh:ro
+    networks:
+      - default
+      - mcpsrv_default
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import json,urllib.request;ok=all(json.load(urllib.request.urlopen(f'http://127.0.0.1:{p}/health',timeout=5)).get('ok') for p in [4016,4017,4019,4021,4022,4030]);h=json.load(urllib.request.urlopen('http://127.0.0.1:3001/health',timeout=5));ok=ok and h.get('status')=='ok';import sys;sys.exit(0 if ok else 1)\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+networks:
+  default:
+    name: customproxy_default
+  mcpsrv_default:
+    external: true
+    name: mcpsrv_default

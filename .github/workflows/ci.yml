@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Compile all sources
+        run: python -m compileall -q src key_rotate_proxy.py
+
+      - name: Run tests
+        env:
+          PROXY_AUTH_TOKEN: ci-test-token-0123456789abcdef
+          KILO_CONFIG_PATH: ${{ github.workspace }}/state/test_kilo_models.json
+        run: pytest
+
