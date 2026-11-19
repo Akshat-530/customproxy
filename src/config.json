@@ -1,8 +1,8 @@
 {
-  "proxy_name": "Custom Model Proxy in Model_Providers container",
+  "proxy_name": "CustomProxy",
   "proxy_port": 3001,
   "auth_token": "",
-  "kilo_config_path": "/state/kilo_models.json",
+  "kilo_config_path": "state/kilo_models.json",
   "providers": {
     "tokenharbor": {
       "base_url": "https://tokenharbor.ai/v1",
@@ -201,7 +201,7 @@
   "write_catalog": true,
   "request_log_enabled": true,
   "request_log_entries": 2000,
-  "request_log_jsonl": "/logs/requests.jsonl",
+  "request_log_jsonl": "logs/requests.jsonl",
   "request_log_jsonl_max_bytes": 67108864,
   "request_body_log_enabled": false,
   "debug_enabled": false,

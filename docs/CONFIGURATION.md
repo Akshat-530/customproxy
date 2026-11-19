@@ -23,12 +23,18 @@ See also [.env.example](../.env.example) for a ready-to-copy template.
 | `write_catalog` | `true` | Rewrite the catalog file on refresh |
 | `request_log_enabled` | `true` | Write `logs/requests.jsonl` |
 | `request_log_entries` | `2000` | In-memory log ring size |
-| `request_log_jsonl` | `/logs/requests.jsonl` | Log path (env `REQUEST_LOG_JSONL` overrides) |
-| `kilo_config_path` | `/state/kilo_models.json` | Catalog path (env `KILO_CONFIG_PATH` overrides) |
+| `request_log_jsonl` | `logs/requests.jsonl` | Log path, relative to the project root (env `REQUEST_LOG_JSONL` overrides) |
+| `kilo_config_path` | `state/kilo_models.json` | Catalog path, relative to the project root (env `KILO_CONFIG_PATH` overrides) |
 | `provider_filters` | `{include:[],exclude:[]}` | Provider allow/deny (globs or `re:`) |
 
-Environment overrides: `PROXY_PORT`, `PROXY_AUTH_TOKEN`, `KILO_CONFIG_PATH`,
-`REQUEST_LOG_JSONL`, `CATALOG_REFRESH_SECONDS`, `WRITE_CATALOG`, `ALLOW_NO_AUTH`.
+Paths may be absolute or relative. Relative paths resolve against the project
+root (`<repo>`, or `/app/customproxy` inside the image); override the root for
+both at once with `CUSTOMPROXY_HOME`.
+
+Environment overrides: `PROXY_PORT`, `PROXY_HOST_PORT` (compose port mapping),
+`PROXY_AUTH_TOKEN`, `KILO_CONFIG_PATH`, `REQUEST_LOG_JSONL`,
+`CATALOG_REFRESH_SECONDS`, `WRITE_CATALOG`, `ALLOW_NO_AUTH`,
+`CUSTOMPROXY_HOME`, `KEY_ROTATE_SERVICES`.
 
 ## Provider block
 

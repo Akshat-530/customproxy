@@ -1,4 +1,4 @@
-"""Generic API key-rotation proxy - lives in the Model_Providers container.
+"""Generic API key-rotation proxy - runs inside the CustomProxy container.
 
 One script, two (or more) instances:
 

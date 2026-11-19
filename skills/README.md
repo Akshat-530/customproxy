@@ -1,8 +1,8 @@
 # CustomProxy skills
 
-Five skills that let any LLM (Kilo, Kilo Code, OpenCode, Claude Code, Cursor,
-custom agents) extend and connect a running CustomProxy deployment. Each is a
-standalone `SKILL.md`; they chain:
+Five skills that let an LLM agent (Kilo, Kilo Code, OpenCode, Claude Code,
+Cursor, custom agents) extend and connect a running CustomProxy deployment.
+Each is a standalone `SKILL.md`; they chain:
 
 ```
 add-provider  ->  add-api-key  ->  add-model  ->  connect-harness  ->  E2E test
@@ -19,10 +19,12 @@ add-provider  ->  add-api-key  ->  add-model  ->  connect-harness  ->  E2E test
 
 ## Shared contract (all five skills)
 
-- **Deployment:** `D:\My files\Docker\work\customproxy`, container
-  `CustomProxy` on `127.0.0.1:3101`.
-- **Never touch** `D:\My files\Docker\work\model-providers` or the
-  `Model_Providers` container.
+- **Deployment:** wherever you cloned this repo. Skills refer to it as
+  `<customproxy-dir>` and resolve it at runtime — never a fixed drive letter
+  or user path.
+- **Port:** published by `compose.yml` as `${PROXY_HOST_PORT:-3001}`. Discover
+  it with `docker port customproxy 3001/tcp` rather than assuming.
+- **Container name:** `customproxy`.
 - **Secrets:** keys/tokens only in `.env` (gitignored); never printed, never
   in `config.json`, logs, or memory — masked as `first4...last2`.
 - **Writes:** BOM-free UTF-8; back up before editing; rollback = restore +
@@ -41,13 +43,15 @@ add-provider  ->  add-api-key  ->  add-model  ->  connect-harness  ->  E2E test
 
 ## Install into a harness
 
-- **Kilo:** copy each folder to `C:\Users\Admin\.config\kilo\skills\`
-  (done in this repo's setup).
-- **Kilo Code (VS Code), Claude Code, other SKILL.md harnesses:** copy the
-  five folders into that harness's skills directory, keeping the `SKILL.md`
-  name and frontmatter.
-- **Prompt-only harnesses:** point the agent at the skill file paths and tell
-  it to follow the step order.
+Copy each skill folder into that harness's skills directory, keeping the
+`SKILL.md` name and frontmatter:
+
+| Harness | Skills directory |
+|---|---|
+| Kilo | `~/.config/kilo/skills/` (`%USERPROFILE%\.config\kilo\skills\` on Windows) |
+| Kilo Code (VS Code) | the extension's configured skills folder |
+| Claude Code | `~/.claude/skills/` |
+| Prompt-only harness | point the agent at the skill file paths and tell it to follow the step order |
 
 ## Connecting a harness to use CustomProxy
 
@@ -55,7 +59,7 @@ Run `customproxy-connect-harness`. Quick reference:
 
 | Setting | Value |
 |---|---|
-| Base URL | `http://127.0.0.1:3101/v1` |
-| API key | `PROXY_AUTH_TOKEN` from `customproxy/.env` |
-| Model ids | `<provider>/<model-id>` (347 available) |
-| Catalog (auto-updating) | `http://127.0.0.1:3101/.well-known/opencode` |
+| Base URL | `http://127.0.0.1:<port>/v1` (default port `3001`) |
+| API key | `PROXY_AUTH_TOKEN` from `.env` |
+| Model ids | `<provider>/<model-id>` (see `/v1/models`) |
+| Catalog (auto-updating) | `http://127.0.0.1:<port>/.well-known/opencode` |

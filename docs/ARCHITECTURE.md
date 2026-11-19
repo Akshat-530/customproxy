@@ -31,6 +31,7 @@
 | `.env` | All secrets: `PROXY_AUTH_TOKEN` + one pool per provider (**gitignored**) |
 | `state/kilo_models.json` | Generated catalog, rewritten on each refresh |
 | `logs/requests.jsonl` | Generated per-request log |
+| `healthcheck.py` | Container health probe: proxy + any enabled relays |
 | `compose.yml` | Single-service deployment, hardened, loopback-only |
 | `skills/*/SKILL.md` | Agent skills that add providers/keys/models, connect harnesses, remove |
 
@@ -58,6 +59,22 @@ provider's `/models`, normalises metadata, applies filters, merges
 is served live from `/v1/models` and `/.well-known/opencode`. A provider whose
 first map attempt has not completed defers the write briefly; a permanently
 failing provider is logged and excluded rather than blocking the catalog.
+
+## Path resolution
+
+Runtime paths are never hardcoded to one machine. `CUSTOMPROXY_HOME` wins if
+set; otherwise the project root is inferred from the location of
+`server.py` — `<repo>` for a checkout (`src/server.py`), `/app/customproxy` in
+the image. Relative `kilo_config_path` / `request_log_jsonl` values resolve
+against that root; absolute values are used as-is. So the same config works
+from a clone on any drive, in Docker, or from a bare `python src/server.py`.
+
+## Relays are optional
+
+`key_rotate_proxy.py` serves the MCP tool keys, not model traffic. It starts
+only for the services named in `KEY_ROTATE_SERVICES`, which is empty by
+default — a deployment that uses no MCP tools runs the proxy alone and needs
+no relay ports, no extra networks, and no sibling containers.
 
 ## Error contract
 

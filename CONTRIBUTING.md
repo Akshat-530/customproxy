@@ -17,7 +17,7 @@ pytest
 ```bash
 cp .env.example .env             # then add your own keys
 docker compose up -d --build
-curl http://127.0.0.1:3101/health
+curl http://127.0.0.1:3001/health
 ```
 
 The proxy binds to `127.0.0.1` only. Never expose it directly to the internet.

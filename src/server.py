@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """CustomProxy - lightweight multi-provider / multi-key rotation router.
-Runs inside the Model_Providers Docker container. OpenAI-compatible on /v1/*.
+Runs inside the CustomProxy Docker container. OpenAI-compatible on /v1/*.
 Smooth rotation: 429/401/402/403/5xx -> next key, no cooldown timers."""
 
 from __future__ import annotations
-import asyncio, fnmatch, hmac, json, logging, os, re, time, uuid
+import asyncio, fnmatch, hmac, json, logging, os, re, tempfile, time, uuid
 from collections import deque
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -17,7 +17,27 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("proxy")
 CONFIG_PATH = Path(__file__).parent / "config.json"
-with open(CONFIG_PATH) as f: CFG = json.load(f)
+with open(CONFIG_PATH, encoding="utf-8") as f: CFG = json.load(f)
+
+def _base_dir() -> Path:
+    """Root for relative runtime paths.
+
+    Works in both supported layouts without hardcoded absolute paths:
+      repo checkout   <repo>/src/server.py      -> <repo>
+      container       /app/customproxy/server.py -> /app/customproxy
+    CUSTOMPROXY_HOME overrides both.
+    """
+    env = os.environ.get("CUSTOMPROXY_HOME")
+    if env: return Path(env).expanduser().resolve()
+    here = CONFIG_PATH.resolve().parent
+    return here.parent if here.name == "src" else here
+
+BASE_DIR = _base_dir()
+
+def _resolve(value: str | None, default: str) -> Path:
+    """Absolute paths are used verbatim; relative ones live under BASE_DIR."""
+    p = Path(value or default).expanduser()
+    return p if p.is_absolute() else (BASE_DIR / p)
 PORT = int(os.environ.get("PROXY_PORT", CFG.get("proxy_port", 3001)))
 AUTH_TOKEN = os.environ.get("PROXY_AUTH_TOKEN") or CFG.get("auth_token") or None
 DEBUG_ENABLED = CFG.get("debug_enabled", True)
@@ -32,7 +52,7 @@ def _env_bool(name: str, default: bool) -> bool:
     v = os.environ.get(name)
     if v is None: return default
     return v.strip().lower() in ("1", "true", "yes", "on")
-KILO_CONFIG_PATH = Path(os.environ.get("KILO_CONFIG_PATH") or CFG.get("kilo_config_path", "/app/customproxy/kilo_models.json"))
+KILO_CONFIG_PATH = _resolve(os.environ.get("KILO_CONFIG_PATH") or CFG.get("kilo_config_path"), "state/kilo_models.json")
 client: Optional[httpx.AsyncClient] = None
 
 def _request_token(request: Request) -> str:
@@ -69,16 +89,16 @@ class RequestLog:
     def __init__(self):
         self.entries: deque = deque(maxlen=int(CFG.get("request_log_entries", 2000)))
         self.enabled = bool(CFG.get("request_log_enabled", True))
-        self.path = Path(os.environ.get("REQUEST_LOG_JSONL") or CFG.get("request_log_jsonl", "/logs/requests.jsonl"))
+        self.path = _resolve(os.environ.get("REQUEST_LOG_JSONL") or CFG.get("request_log_jsonl"), "logs/requests.jsonl")
         self.max_bytes = int(CFG.get("request_log_jsonl_max_bytes", 64 * 1024 * 1024))
     def add(self, **fields):
         if not self.enabled: return
         e = {"ts": round(time.time(), 3), **fields}
         self.entries.append(e)
         line = json.dumps(e, ensure_ascii=False) + "\n"
-        # Prefer the mounted host dir; fall back to /tmp if it is not writable
-        # (e.g. a Windows bind mount owned by another uid).
-        for p in (self.path, Path("/tmp/proxy_requests.jsonl")):
+        # Prefer the configured dir; fall back to the system temp dir if it is
+        # not writable (e.g. a bind mount owned by another uid).
+        for p in (self.path, Path(tempfile.gettempdir()) / "customproxy_requests.jsonl"):
             try:
                 p.parent.mkdir(parents=True, exist_ok=True)
                 if p.exists() and p.stat().st_size > self.max_bytes:
@@ -736,6 +756,8 @@ async def lifespan(app: FastAPI):
         else:
             raise RuntimeError(
                 "PROXY_AUTH_TOKEN (or config auth_token) is required. "
+                "Copy .env.example to .env and set PROXY_AUTH_TOKEN to a long "
+                "random string (python -c \"import secrets;print(secrets.token_urlsafe(32))\"). "
                 "Set allow_no_auth=true only for a fully trusted local setup."
             )
     elif len(AUTH_TOKEN) < 24:
@@ -1049,7 +1071,7 @@ async def proxy(request: Request, path: str):
                 _dbg.pop("full_body", None)
                 _dbg["full_body_omitted_bytes"] = len(_line)
                 _line = json.dumps(_dbg)
-            _log_path = Path(CFG.get("request_log_path", "/tmp/request_log.jsonl"))
+            _log_path = _resolve(CFG.get("request_log_path"), "logs/request_log.jsonl")
             try:
                 if _log_path.exists() and _log_path.stat().st_size > REQUEST_LOG_MAX:
                     _log_path.write_bytes(b"")

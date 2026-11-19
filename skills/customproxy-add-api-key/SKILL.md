@@ -23,9 +23,9 @@ runtime, in this order:
 3. Never assume a fixed drive letter or user path - the deployment may live
    anywhere: Windows, macOS, Linux, or WSL.
 
-The proxy's host port is published by `compose.yml` (default `3101`).
+The proxy's host port is published by `compose.yml` (default `3001`).
 Discover it at runtime instead of assuming: `docker port CustomProxy
-3001/tcp` -> e.g. `127.0.0.1:3101`. Base URL is `http://127.0.0.1:<port>/v1`.
+3001/tcp`). Base URL is `http://127.0.0.1:<port>/v1`.
 
 Everything else in this skill is relative to `<customproxy-dir>`: config at
 `src/config.json`, secrets at `.env`, catalog at `state/kilo_models.json`,
@@ -44,7 +44,7 @@ this provider limited to selected models, set `include_models` /
 enforced on the catalog and on direct calls.
 
 Deployment: `<customproxy-dir>`
-Container: `CustomProxy` (port `127.0.0.1:3101`) - **never** touch `Model_Providers`.
+Container: `CustomProxy` (port `127.0.0.1:<port>`).
 Secrets live in that project's `.env`; config in `src/config.json`.
 
 **Never print, echo, or log the API key.** Refer to it only by label.
@@ -216,7 +216,7 @@ Wait for `healthy`, then confirm the label is in the pool (stats only):
 ```powershell
 $tok = (Get-Content .env | Where-Object { $_ -match '^PROXY_AUTH_TOKEN=' }) -replace '^PROXY_AUTH_TOKEN=',''
 $hdr = @{ Authorization = "Bearer $tok" }
-$h = Invoke-RestMethod "http://127.0.0.1:3101/health" -Headers $hdr
+$h = Invoke-RestMethod "http://127.0.0.1:<port>/health" -Headers $hdr
 $h.providers.<provider>.keys | Where-Object { $_.label -eq "<label>" }
 ```
 
@@ -235,7 +235,7 @@ Pick the cheapest target:
 Then:
 
 ```powershell
-$models = Invoke-RestMethod "http://127.0.0.1:3101/v1/models" -Headers $hdr
+$models = Invoke-RestMethod "http://127.0.0.1:<port>/v1/models" -Headers $hdr
 ($models.data | Where-Object { $_.owned_by -eq '<provider>' -and $_.free -eq $true } |
    Select-Object -First 1).id
 ```
@@ -245,7 +245,7 @@ Send **two or three** minimal requests (rotation advances per request):
 ```powershell
 $body = '{"model":"<provider>/<model>","messages":[{"role":"user","content":"hi"}],"max_tokens":8}'
 1..3 | ForEach-Object {
-  try { Invoke-RestMethod "http://127.0.0.1:3101/v1/chat/completions" -Headers $hdr -Method Post -ContentType 'application/json' -Body $body -TimeoutSec 120 | Out-Null; "call $_ : ok" }
+  try { Invoke-RestMethod "http://127.0.0.1:<port>/v1/chat/completions" -Headers $hdr -Method Post -ContentType 'application/json' -Body $body -TimeoutSec 120 | Out-Null; "call $_ : ok" }
   catch { "call $_ : HTTP $([int]$_.Exception.Response.StatusCode)" }
 }
 ```
@@ -253,7 +253,7 @@ $body = '{"model":"<provider>/<model>","messages":[{"role":"user","content":"hi"
 Inspect what actually handled each call:
 
 ```powershell
-$logs = Invoke-RestMethod "http://127.0.0.1:3101/logs?limit=10&provider=<provider>" -Headers $hdr
+$logs = Invoke-RestMethod "http://127.0.0.1:<port>/logs?limit=10&provider=<provider>" -Headers $hdr
 $logs.entries | Select-Object request_id,outcome,model,api_key_id,attempts,duration_ms,http_status,error_type | Format-Table
 ```
 
@@ -278,8 +278,8 @@ Reply with a short block:
   log line (`outcome`, `model`, `key`, `duration_ms`).
 - If a free model was unavailable and a paid test was used, state the token
   usage from `usage` in the log/response.
-- Reminder: *the key is stored only in `customproxy/.env` (gitignored); the
-  running `Model_Providers` container was not touched.*
+- Reminder: *the key is stored only in `.env` (gitignored); it is never in
+  `config.json`, logs, or a commit.*
 
 ## Removal
 
@@ -291,7 +291,6 @@ proves the removal (catalog gone + call blocked + relays intact).
 
 - Never print the key, not even a prefix - label + length only.
 - Never write the key to `src/config.json`, logs, memory, or a commit.
-- Never restart or modify `Model_Providers`.
 - One backup before every `.env` edit; rollback = restore backup + recreate.
 - If the user pasted the key in chat, advise rotating it afterwards.
 - `.env` must stay BOM-free; use `[System.IO.File]::WriteAllText` with

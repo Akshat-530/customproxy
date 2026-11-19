@@ -1,11 +1,12 @@
 # ============================================================================
-# CustomProxy — standalone container (independent from Model_Providers)
+# CustomProxy - standalone container
 #
+#   cp .env.example .env      # fill in PROXY_AUTH_TOKEN + your provider keys
 #   docker compose up -d --build
-#   -> http://127.0.0.1:3101/v1
+#   -> http://127.0.0.1:3001/v1
 #
-# Everything this container needs lives in this directory. It never mounts or
-# touches the Model_Providers project.
+# Everything the container needs comes from this directory. There are no
+# external networks, host paths, or sibling projects to create first.
 # ============================================================================
 name: customproxy
 
@@ -13,7 +14,7 @@ services:
   customproxy:
     build: .
     image: customproxy:latest
-    container_name: CustomProxy
+    container_name: customproxy
     restart: unless-stopped
     init: true
     read_only: true
@@ -35,32 +36,32 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-    env_file: .env
+    # Optional on disk so `docker compose config` works before the first copy
+    # of .env.example; the interpolation below then fails with a clear message.
+    env_file:
+      - path: .env
+        required: false
     environment:
-      - KEY_ROTATE_SERVICES=tavily,firecrawl,gemini,tokenharbour,context7,zro
-      - KEY_PROXY_DEBUG=0
+      # The image mounts writable state at the absolute /state and /logs.
+      # (Running from a plain checkout without Docker uses the relative
+      # defaults in src/config.json instead.)
+      - KILO_CONFIG_PATH=/state/kilo_models.json
+      - REQUEST_LOG_JSONL=/logs/requests.jsonl
+      # Relays are opt-in: list the MCP services you actually use.
+      - KEY_ROTATE_SERVICES=${KEY_ROTATE_SERVICES:-}
+      - KEY_PROXY_DEBUG=${KEY_PROXY_DEBUG:-0}
       - CATALOG_REFRESH_SECONDS=${CATALOG_REFRESH_SECONDS:-600}
     ports:
-      - "127.0.0.1:3101:3001"
+      - "127.0.0.1:${PROXY_HOST_PORT:-3001}:3001"
     volumes:
       - ./key_rotate_proxy.py:/app/key_rotate_proxy.py:ro
       - ./src:/app/customproxy:ro
       - ./state:/state
       - ./logs:/logs
-      - ./run-services.sh:/usr/local/bin/model-providers-services.sh:ro
-    networks:
-      - default
-      - mcpsrv_default
+      - ./run-services.sh:/usr/local/bin/customproxy-services.sh:ro
     healthcheck:
-      test: ["CMD-SHELL", "python3 -c \"import json,urllib.request;ok=all(json.load(urllib.request.urlopen(f'http://127.0.0.1:{p}/health',timeout=5)).get('ok') for p in [4016,4017,4019,4021,4022,4030]);h=json.load(urllib.request.urlopen('http://127.0.0.1:3001/health',timeout=5));ok=ok and h.get('status')=='ok';import sys;sys.exit(0 if ok else 1)\""]
+      test: ["CMD", "python3", "/app/healthcheck.py"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 20s
-
-networks:
-  default:
-    name: customproxy_default
-  mcpsrv_default:
-    external: true
-    name: mcpsrv_default
+      start_period: 30s

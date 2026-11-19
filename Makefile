@@ -1,7 +1,9 @@
-.PHONY: help install test lint compile build up down restart logs health clean
+.PHONY: help install test compile build up down restart logs health clean
 
 PYTHON ?= python3
 COMPOSE ?= docker compose
+# Windows venvs put binaries in Scripts/, POSIX in bin/.
+VENV_BIN := $(if $(wildcard .venv/Scripts),.venv/Scripts,.venv/bin)
 
 help:
 	@echo "install   create venv and install runtime + dev dependencies"
@@ -10,15 +12,15 @@ help:
 	@echo "build     build the container image"
 	@echo "up        start the stack in the background"
 	@echo "down      stop the stack"
-	@echo "restart   recreate the container"
+	@echo "restart   recreate the container (needed after .env changes)"
 	@echo "logs      follow container logs"
 	@echo "health    probe /health"
 	@echo "clean     remove caches and build artifacts"
 
 install:
 	$(PYTHON) -m venv .venv
-	.venv/bin/python -m pip install --upgrade pip
-	.venv/bin/pip install -r requirements.txt -r requirements-dev.txt
+	$(VENV_BIN)/python -m pip install --upgrade pip
+	$(VENV_BIN)/pip install -r requirements.txt -r requirements-dev.txt
 
 test:
 	$(PYTHON) -m pytest
@@ -42,7 +44,7 @@ logs:
 	$(COMPOSE) logs -f --tail=100
 
 health:
-	@curl -fsS http://127.0.0.1:3101/health || echo "unreachable"
+	@curl -fsS "http://127.0.0.1:$${PROXY_HOST_PORT:-3001}/health" || echo "unreachable"
 
 clean:
 	rm -rf .pytest_cache

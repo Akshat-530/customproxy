@@ -48,11 +48,40 @@ CustomProxy :3001  ──►  provider 1 (keys k1..kN, rotated)
 
 ## Quick start
 
-```powershell
-copy .env.example .env      # then fill in your keys
+Requires Docker (or Python 3.11+ if you prefer to run it directly). No fixed
+paths, no external networks, no other project needed.
+
+```bash
+cp .env.example .env      # Windows: copy .env.example .env
+```
+
+Open `.env` and set `PROXY_AUTH_TOKEN` to a long random string:
+
+```bash
+python -c "import secrets;print(secrets.token_urlsafe(32))"
+```
+
+Then add the provider keys you actually have and start it:
+
+```bash
 docker compose up -d --build
 curl http://127.0.0.1:3001/health
 ```
+
+Providers you leave without keys are skipped, not an error — the proxy starts
+fine with a single provider.
+
+### Without Docker
+
+```bash
+python -m venv .venv
+source .venv/bin/activate      # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+export PROXY_AUTH_TOKEN=$(python -c "import secrets;print(secrets.token_urlsafe(32))")
+python src/server.py
+```
+
+Catalog and logs are written to `state/` and `logs/` next to the project.
 
 Point any OpenAI client at:
 
@@ -63,6 +92,17 @@ Point any OpenAI client at:
 The port is published on `127.0.0.1` only — the proxy and its upstream keys
 are never reachable from the internet. For remote access use an SSH tunnel or
 your own TLS reverse proxy; never expose the port directly.
+
+### Changing the port
+
+Set `PROXY_HOST_PORT` in `.env` if `3001` is already taken:
+
+```env
+PROXY_HOST_PORT=8080
+```
+
+Inside the container the proxy still listens on `3001`; only the published
+port changes.
 
 ## Key format (.env)
 
@@ -149,6 +189,25 @@ Every response carries `x-request-id`; the same id is in `/logs` and
 - Body size limit: `max_request_bytes` (32 MB default). Optional local rate limit: `rate_limit_per_minute` (0 = off).
 - Config toggles: `debug_enabled`, `request_body_log_enabled` (full prompts; off by default), `write_catalog`, `catalog_refresh_seconds`.
 - The entrypoint needs `CHOWN/SETUID/SETGID` caps only to fix mount ownership, then drops to `app`.
+- MCP key-rotation relays are **opt-in**: leave `KEY_ROTATE_SERVICES` empty and only the proxy runs.
+
+## Portability
+
+Nothing in this repo is tied to one machine:
+
+- No absolute host paths. The catalog and log paths are relative
+  (`state/kilo_models.json`, `logs/requests.jsonl`) and resolve against the
+  project root, which is detected from the file layout — a repo checkout and
+  `/app/customproxy` inside the image both work. Override with
+  `CUSTOMPROXY_HOME` if you place things elsewhere.
+- No sibling projects or external Docker networks. `compose.yml` is
+  self-contained.
+- No fixed host port. `PROXY_HOST_PORT` changes it; the container port stays
+  `3001`.
+- No provider is required. A provider without keys is skipped at startup, so a
+  fresh clone runs with one provider or ten.
+- Linux/amd64 and arm64: the base image is multi-arch and every system
+  dependency is installed from apt.
 
 ## Tests & CI
 

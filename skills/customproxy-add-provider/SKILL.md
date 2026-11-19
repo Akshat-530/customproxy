@@ -23,9 +23,9 @@ runtime, in this order:
 3. Never assume a fixed drive letter or user path - the deployment may live
    anywhere: Windows, macOS, Linux, or WSL.
 
-The proxy's host port is published by `compose.yml` (default `3101`).
+The proxy's host port is published by `compose.yml` (default `3001`).
 Discover it at runtime instead of assuming: `docker port CustomProxy
-3001/tcp` -> e.g. `127.0.0.1:3101`. Base URL is `http://127.0.0.1:<port>/v1`.
+3001/tcp`). Base URL is `http://127.0.0.1:<port>/v1`.
 
 Everything else in this skill is relative to `<customproxy-dir>`: config at
 `src/config.json`, secrets at `.env`, catalog at `state/kilo_models.json`,
@@ -34,7 +34,7 @@ logs at `logs/requests.jsonl`, compose file at `compose.yml`.
 # CustomProxy - Add a Provider
 
 Deployment: `<customproxy-dir>`
-Container: `CustomProxy` (port `127.0.0.1:3101`) - **never** touch `Model_Providers`.
+Container: `CustomProxy` (port `127.0.0.1:<port>`).
 Config: `src/config.json`. Secrets: `.env`. Skills to chain:
 `customproxy-add-api-key` (keys) and `customproxy-add-model` (models).
 
@@ -195,22 +195,22 @@ $hdr = @{ Authorization = "Bearer $tok" }
 docker ps --filter name=CustomProxy --format "{{.Status}}"
 
 # 2. provider present in health
-$h = Invoke-RestMethod "http://127.0.0.1:3101/health" -Headers $hdr
+$h = Invoke-RestMethod "http://127.0.0.1:<port>/health" -Headers $hdr
 $h.providers.xy
 
 # 3. keys in pool (label visible, requests=0)
 $h.providers.xy.keys
 
 # 4. catalog contains the provider
-$mods = Invoke-RestMethod "http://127.0.0.1:3101/v1/models" -Headers $hdr
+$mods = Invoke-RestMethod "http://127.0.0.1:<port>/v1/models" -Headers $hdr
 ($mods.data | Where-Object { $_.owned_by -eq "xy" } | Measure-Object).Count
 
 # 5. chat works (free model preferred; else approval)
 $body = '{"model":"xy/<model-id>","messages":[{"role":"user","content":"Reply with exactly: OK"}],"max_tokens":16}'
-Invoke-RestMethod "http://127.0.0.1:3101/v1/chat/completions" -Headers ($hdr + @{"Content-Type"="application/json"}) -Method Post -Body $body -TimeoutSec 120
+Invoke-RestMethod "http://127.0.0.1:<port>/v1/chat/completions" -Headers ($hdr + @{"Content-Type"="application/json"}) -Method Post -Body $body -TimeoutSec 120
 
 # 6. rotation proof: 2-3 calls, distinct api_key_id in /logs (if >1 key)
-$logs = Invoke-RestMethod "http://127.0.0.1:3101/logs?limit=10&provider=xy" -Headers $hdr
+$logs = Invoke-RestMethod "http://127.0.0.1:<port>/logs?limit=10&provider=xy" -Headers $hdr
 $logs.entries | Select-Object outcome,api_key_id,attempts,duration_ms,http_status,error_type | Format-Table
 
 # 7. filter enforcement spot check (if include/exclude configured)
@@ -234,9 +234,9 @@ Reply with:
 - End-to-end test table: each step pass/fail, plus one log line
   (`outcome`, `model`, `api_key_id`, `duration_ms`).
 - Whitelist summary (patterns set, or "open discovery").
-- Reminder: keys live in `customproxy/.env` (gitignored); *Model_Providers
-  was not touched*; and if using Kilo/OpenCode, their own configs may need
-  the new models too (see add-model skill's warning).
+- Reminder: keys live in `.env` (gitignored) and never in `config.json`;
+  if using Kilo/OpenCode, their own configs may need the new models too
+  (see add-model skill's warning).
 
 ## Removal
 
@@ -247,7 +247,6 @@ proves the removal (catalog gone + call blocked + relays intact).
 ## Safety rules
 
 - Never print API keys; label + last-4 only.
-- Never touch the old `Model_Providers` deployment folder or `Model_Providers`.
 - One backup before every config/`.env` edit; rollback = restore + recreate.
 - BOM-free writes only for `.env` and `src/config.json`.
 - Provider id must be a safe slug - it becomes a URL path segment and env var

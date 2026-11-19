@@ -1,8 +1,12 @@
 #!/bin/sh
-# Model_Providers service launcher: CustomProxy + key-rotation relays.
+# CustomProxy service launcher: proxy + optional key-rotation relays.
 #   PID 1 (this shell)
 #     +- python3 /app/customproxy/server.py   -> CustomProxy on :3001
-#     +- python3 /app/key_rotate_proxy.py X   -> one rotation relay per KEY_ROTATE_SERVICES
+#     +- python3 /app/key_rotate_proxy.py X   -> one relay per KEY_ROTATE_SERVICES
+#
+# KEY_ROTATE_SERVICES is empty by default: a plain deployment runs only the
+# proxy. Set it to the MCP services whose keys you want rotated, e.g.
+#   KEY_ROTATE_SERVICES=tavily,firecrawl
 #
 # The launcher supervises the relays: a relay that exits is restarted in
 # place. If CustomProxy (the primary service) exits, the launcher exits so

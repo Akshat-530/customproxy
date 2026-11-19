@@ -22,9 +22,9 @@ runtime, in this order:
 3. Never assume a fixed drive letter or user path - the deployment may live
    anywhere: Windows, macOS, Linux, or WSL.
 
-The proxy's host port is published by `compose.yml` (default `3101`).
+The proxy's host port is published by `compose.yml` (default `3001`).
 Discover it at runtime instead of assuming: `docker port CustomProxy
-3001/tcp` -> e.g. `127.0.0.1:3101`. Base URL is `http://127.0.0.1:<port>/v1`.
+3001/tcp`). Base URL is `http://127.0.0.1:<port>/v1`.
 
 Everything else in this skill is relative to `<customproxy-dir>`: config at
 `src/config.json`, secrets at `.env`, catalog at `state/kilo_models.json`,
@@ -33,7 +33,7 @@ logs at `logs/requests.jsonl`, compose file at `compose.yml`.
 # CustomProxy - Remove (model / provider / API key)
 
 Deployment: `<customproxy-dir>` - container `CustomProxy`
-on `127.0.0.1:3101`. **Never touch `Model_Providers`.**
+on `127.0.0.1:<port>`.
 Config `src/config.json`, secrets `.env`, catalog `state/kilo_models.json`
 (generated - never hand-edit).
 
@@ -102,15 +102,15 @@ docker compose up -d --force-recreate
 
 ```powershell
 # 1) gone from the catalog listing
-$mods = Invoke-RestMethod "http://127.0.0.1:3101/v1/models" -Headers $hdr
+$mods = Invoke-RestMethod "http://127.0.0.1:<port>/v1/models" -Headers $hdr
 [bool]($mods.data | Where-Object { $_.id -eq '<provider>/<model-id>' })   # expect False
 
 # 2) metadata blocked (needs the exclude_models pattern)
-try { Invoke-RestMethod "http://127.0.0.1:3101/v1/models/<provider>/<model-id>" -Headers $hdr }
+try { Invoke-RestMethod "http://127.0.0.1:<port>/v1/models/<provider>/<model-id>" -Headers $hdr }
 catch { [int]$_.Exception.Response.StatusCode }   # expect 404
 
 # 3) direct call blocked (needs the exclude_models pattern)
-try { Invoke-RestMethod "http://127.0.0.1:3101/v1/chat/completions" -Headers ($hdr + @{"Content-Type"="application/json"}) -Method Post -Body '{"model":"<provider>/<model-id>","messages":[{"role":"user","content":"hi"}],"max_tokens":1}' }
+try { Invoke-RestMethod "http://127.0.0.1:<port>/v1/chat/completions" -Headers ($hdr + @{"Content-Type"="application/json"}) -Method Post -Body '{"model":"<provider>/<model-id>","messages":[{"role":"user","content":"hi"}],"max_tokens":1}' }
 catch { [int]$_.Exception.Response.StatusCode; ($_.ErrorDetails.Message | ConvertFrom-Json).error.type }  # expect 403 model_filtered
 ```
 
@@ -141,14 +141,14 @@ Order matters: **models → keys → provider block → env var → recreate**.
 
 ```powershell
 docker compose up -d --force-recreate
-$h = Invoke-RestMethod "http://127.0.0.1:3101/health" -Headers $hdr
+$h = Invoke-RestMethod "http://127.0.0.1:<port>/health" -Headers $hdr
 $h.providers.PSObject.Properties.Name            # provider must be absent
 $h.providers.PSObject.Properties.Count
 ```
 
 ```powershell
 # models gone too
-$mods = Invoke-RestMethod "http://127.0.0.1:3101/v1/models" -Headers $hdr
+$mods = Invoke-RestMethod "http://127.0.0.1:<port>/v1/models" -Headers $hdr
 ($mods.data | Where-Object { $_.owned_by -eq '<id>' } | Measure-Object).Count   # expect 0
 
 # relays still healthy (they share pools - prove nothing broke)
@@ -172,13 +172,13 @@ docker inspect CustomProxy --format "{{.State.Health.Status}}"                  
 
 ```powershell
 docker compose up -d --force-recreate
-$h = Invoke-RestMethod "http://127.0.0.1:3101/health" -Headers $hdr
+$h = Invoke-RestMethod "http://127.0.0.1:<port>/health" -Headers $hdr
 $h.providers.<provider>.keys | Select-Object label,requests,errors   # label must be gone
 ```
 
 ```powershell
 # rotation still works with the remaining keys (2-3 tiny calls, free model)
-$mods = Invoke-RestMethod "http://127.0.0.1:3101/v1/models" -Headers $hdr
+$mods = Invoke-RestMethod "http://127.0.0.1:<port>/v1/models" -Headers $hdr
 ($mods.data | Where-Object { $_.owned_by -eq '<provider>' -and $_.id -like '*:free' } | Select-Object -First 1).id
 # then /logs -> distinct api_key_id, all outcome=ok
 ```
@@ -210,7 +210,6 @@ docker compose up -d --force-recreate
 - Never remove the last key of a provider without explicit confirmation.
 - Never delete a shared pool used by relays without warning + confirmation.
 - Never hand-edit `state/kilo_models.json`.
-- Never touch `Model_Providers`.
 - BOM-free writes only; re-parse `src/config.json` after editing.
 - If removal verification fails, restore the backup immediately and report
   the exact error instead of retrying blindly.

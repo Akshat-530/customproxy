@@ -3,7 +3,7 @@ name: customproxy-add-model
 description: >-
   Add a model to the CustomProxy catalog. Use when the user says "add this
   <model> by <provider>" or wants to expose a specific model through
-  CustomProxy (127.0.0.1:3101). Researches the model, builds an approval
+  CustomProxy (127.0.0.1:<port>). Researches the model, builds an approval
   table, whitelists it, verifies it with a minimal-token call, and reports
   follow-up steps for other harnesses (Kilo, OpenCode, etc.). Part of the
   CustomProxy skill chain: add-provider → add-api-key → add-model.
@@ -23,9 +23,9 @@ runtime, in this order:
 3. Never assume a fixed drive letter or user path - the deployment may live
    anywhere: Windows, macOS, Linux, or WSL.
 
-The proxy's host port is published by `compose.yml` (default `3101`).
+The proxy's host port is published by `compose.yml` (default `3001`).
 Discover it at runtime instead of assuming: `docker port CustomProxy
-3001/tcp` -> e.g. `127.0.0.1:3101`. Base URL is `http://127.0.0.1:<port>/v1`.
+3001/tcp`). Base URL is `http://127.0.0.1:<port>/v1`.
 
 Everything else in this skill is relative to `<customproxy-dir>`: config at
 `src/config.json`, secrets at `.env`, catalog at `state/kilo_models.json`,
@@ -86,7 +86,7 @@ upstream omits from its listing.
 
 1. The standalone deployment lives in `<customproxy-dir>`.
    Config: `src/config.json`. Catalog: `state/kilo_models.json`. Log:
-   `logs/requests.jsonl`. Port: `127.0.0.1:3101`.
+   `logs/requests.jsonl`. Port: `127.0.0.1:<port>`.
 2. Read the auth token from that project's `.env` (`PROXY_AUTH_TOKEN=`) -
    never print it. Example header: `Authorization: Bearer $env:PAT`.
 3. Confirm the container is running:
@@ -101,7 +101,7 @@ From "add this xx model by xy provider" extract:
 - **provider** = `xy` → must match a `providers` key in `src/config.json`
   (e.g. `tokenharbor`, `nvidia`, `google`, `kilo`, `openrouter`, …).
 - **model** = `xx` → fuzzy-match against the provider's models. Query:
-  `GET http://127.0.0.1:3101/v1/models` (with the token) and filter
+  `GET http://127.0.0.1:<port>/v1/models` (with the token) and filter
   `data` where `owned_by == provider` and `id` contains the user's text.
 - If several candidates, show them and ask which one.
 - If none: the provider's `/models` may not expose it yet - continue with
@@ -130,7 +130,7 @@ say "unknown - search manually" in the table).
 Also read what the proxy already knows (if the model is discoverable):
 
 ```powershell
-curl.exe -s http://127.0.0.1:3101/v1/models/<provider>/<model-id> -H "Authorization: Bearer $env:PAT"
+curl.exe -s http://127.0.0.1:<port>/v1/models/<provider>/<model-id> -H "Authorization: Bearer $env:PAT"
 ```
 
 Note whether this is catalog data (`metadata.source`) or provider data.
@@ -185,7 +185,7 @@ docker compose up -d --build      # or: docker compose restart
 Wait for the healthcheck, then confirm the model appears:
 
 ```powershell
-curl.exe -s http://127.0.0.1:3101/v1/models -H "Authorization: Bearer $env:PAT" | findstr /i "<model-id>"
+curl.exe -s http://127.0.0.1:<port>/v1/models -H "Authorization: Bearer $env:PAT" | findstr /i "<model-id>"
 ```
 
 Also confirm it is **callable** (filters are enforced on direct calls -
@@ -198,7 +198,7 @@ One call, tiny output, no tools:
 
 ```powershell
 $body = '{"model":"<provider>/<model-id>","messages":[{"role":"user","content":"Reply with exactly: OK"}],"max_tokens":16}'
-curl.exe -s -X POST http://127.0.0.1:3101/v1/chat/completions `
+curl.exe -s -X POST http://127.0.0.1:<port>/v1/chat/completions `
   -H "Authorization: Bearer $env:PAT" -H "Content-Type: application/json" `
   -d $body
 ```
@@ -231,7 +231,7 @@ Reply with:
 > The model is now live in CustomProxy. If you use it through another harness
 > (Kilo, OpenCode, etc.) you may also need to add it to that harness's own
 > config - CustomProxy's catalog at
-> `http://127.0.0.1:3101/.well-known/opencode` can be consumed by those tools,
+> `http://127.0.0.1:<port>/.well-known/opencode` can be consumed by those tools,
 > but each harness keeps its own model list/selection.
 
 4. If `max_models` was raised or an exclude pattern was changed, mention it.

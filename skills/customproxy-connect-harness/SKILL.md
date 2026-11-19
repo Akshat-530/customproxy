@@ -23,9 +23,9 @@ runtime, in this order:
 3. Never assume a fixed drive letter or user path - the deployment may live
    anywhere: Windows, macOS, Linux, or WSL.
 
-The proxy's host port is published by `compose.yml` (default `3101`).
+The proxy's host port is published by `compose.yml` (default `3001`).
 Discover it at runtime instead of assuming: `docker port CustomProxy
-3001/tcp` -> e.g. `127.0.0.1:3101`. Base URL is `http://127.0.0.1:<port>/v1`.
+3001/tcp`). Base URL is `http://127.0.0.1:<port>/v1`.
 
 Everything else in this skill is relative to `<customproxy-dir>`: config at
 `src/config.json`, secrets at `.env`, catalog at `state/kilo_models.json`,
@@ -34,7 +34,7 @@ logs at `logs/requests.jsonl`, compose file at `compose.yml`.
 # CustomProxy - Connect a Harness
 
 Deployment: `<customproxy-dir>` - container `CustomProxy`,
-port `127.0.0.1:3101`, OpenAI-compatible on `/v1` and without the prefix.
+port `127.0.0.1:<port>`, OpenAI-compatible on `/v1` and without the prefix.
 
 **Never print** the harness's existing API keys or the proxy token.
 
@@ -44,10 +44,10 @@ port `127.0.0.1:3101`, OpenAI-compatible on `/v1` and without the prefix.
 
 | Value | Where it comes from |
 |---|---|
-| Base URL | `http://127.0.0.1:3101/v1` (most OpenAI-compatible clients) |
+| Base URL | `http://127.0.0.1:<port>/v1` (most OpenAI-compatible clients) |
 | API key | `PROXY_AUTH_TOKEN` from `<customproxy-dir>\.env` |
-| Model catalog | `GET http://127.0.0.1:3101/v1/models` (token) - 347 models, `provider/upstream-id` format |
-| Kilo/OpenCode-ready JSON | `GET http://127.0.0.1:3101/.well-known/opencode` - a `{"provider":{"customProxy":{"models":{...}}}}` block, auto-updated |
+| Model catalog | `GET http://127.0.0.1:<port>/v1/models` (token) - 347 models, `provider/upstream-id` format |
+| Kilo/OpenCode-ready JSON | `GET http://127.0.0.1:<port>/.well-known/opencode` - a `{"provider":{"customProxy":{"models":{...}}}}` block, auto-updated |
 | Note | Local-only by design: port binds to `127.0.0.1`, never exposed to the internet |
 
 Read the token without printing it:
@@ -106,7 +106,7 @@ Show what will change before touching anything. Typical plan for Kilo:
 
 | Item | Before | After |
 |---|---|---|
-| `provider.customProxy.options.baseURL` | old value | `http://127.0.0.1:3101/v1` |
+| `provider.customProxy.options.baseURL` | old value | `http://127.0.0.1:<port>/v1` |
 | `provider.customProxy.options.apiKey` | old token | CustomProxy `PROXY_AUTH_TOKEN` (same `hhSK…` value already in use) |
 | `provider.customProxy.models` | 32 entries | 347 entries from `/.well-known/opencode` |
 
@@ -118,7 +118,7 @@ For OpenCode:
     "customproxy": {
       "npm": "@ai-sdk/openai-compatible",
       "name": "CustomProxy",
-      "options": { "baseURL": "http://127.0.0.1:3101/v1", "apiKey": "{env:PROXY_AUTH_TOKEN}" },
+      "options": { "baseURL": "http://127.0.0.1:<port>/v1", "apiKey": "{env:PROXY_AUTH_TOKEN}" },
       "models": { "<model-id>": { "name": "<label>" } }
     }
   },
@@ -127,12 +127,11 @@ For OpenCode:
 ```
 
 Warn when relevant:
-- **Old proxy conflict:** if the harness still points at `:3001`
-  (`Model_Providers`), switching to `:3101` changes which deployment serves
-  requests. Ask: keep both (add a second provider block) or replace?
-- **Key continuity:** this deployment uses the same `PROXY_AUTH_TOKEN` value
-  the old proxy used, so existing setups keep working - but confirm the value
-  in the harness matches `PROXY_AUTH_TOKEN`.
+- **Port conflict:** if the harness already points at another OpenAI-compatible
+  endpoint, confirm which one should serve requests. Ask: keep both (add a
+  second provider block) or replace?
+- **Key continuity:** confirm the token in the harness matches
+  `PROXY_AUTH_TOKEN` from this deployment's `.env`.
 - **Windows JSONC safety:** editing `kilo.jsonc` strips comments unless the
   tool is comment-aware. Prefer preserving comments; if a rewrite would lose
   them, say so and back up first.
@@ -157,7 +156,7 @@ Preferred: **edit the config file** on the host.
 Fetch the fresh catalog for the models block:
 
 ```powershell
-Invoke-RestMethod "http://127.0.0.1:3101/.well-known/opencode" -OutFile "$env:TEMP\cp-catalog.json"
+Invoke-RestMethod "http://127.0.0.1:<port>/.well-known/opencode" -OutFile "$env:TEMP\cp-catalog.json"
 # merge $catalog.provider.customProxy.models into the harness config
 ```
 
@@ -200,8 +199,8 @@ Common failure → meaning table:
 ## Safety rules
 
 - Never print keys or tokens; masked only.
-- Never edit `Model_Providers` files or switch harnesses to port 3001
-  without explicit approval (that is the OLD proxy).
+- Never point a harness at a different deployment without explicit approval
+  - confirm which base URL should serve requests first.
 - Back up before every harness config edit; rollback = restore + reparse.
 - JSONC: preserve comments where possible; if the write loses them, say so.
 - BOM-free writes only (`UTF8Encoding($false)`).
