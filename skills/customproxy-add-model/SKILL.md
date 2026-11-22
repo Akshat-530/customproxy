@@ -58,7 +58,7 @@ Model access is controlled per provider in `src/config.json`:
 | `models` | exact ids **or globs**; empty `[]` = discover everything |
 | `include_models` | model must match one pattern (glob or `re:<regex>`) |
 | `exclude_models` | matching models are dropped from the catalog **and** blocked on direct calls (`403 model_filtered`) |
-| `max_models` | caps the catalog (free models first); catalog-only, not access |
+| `max_models` | caps the catalog (free models first). Capped-out ids are also refused on direct calls (`403 model_filtered`) |
 | `manual_models` | hand-added models; bypass all filters, survive refreshes |
 
 Whitelisting is required only when a filter would hide the model. After any
