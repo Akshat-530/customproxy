@@ -1,124 +1,141 @@
 # CustomProxy
 
-A single OpenAI-compatible endpoint in front of many model providers, with
-transparent API-key rotation, a self-updating model catalog, per-model
-metadata, and exact upstream error surfacing.
+**One OpenAI-compatible endpoint. One key. Every provider behind it.**
 
-**One base URL. One API key. Every provider behind it.**
+CustomProxy sits in front of every model provider you hold keys for and exposes
+them through a single OpenAI-compatible API. Point any client at it, use one
+token, and call any model as `provider/model-id`. Keys are pooled per provider
+and rotated automatically, the catalog refreshes itself from each provider's
+`/models`, and upstream errors reach you unchanged instead of collapsing into a
+generic failure.
 
+[![CI](https://github.com/Akshat-530/customproxy/actions/workflows/ci.yml/badge.svg)](https://github.com/Akshat-530/customproxy/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![Python](https://img.shields.io/badge/python-3.12-3776AB.svg)
+![Tests](https://img.shields.io/badge/tests-46%20passing-brightgreen.svg)
+![Docker](https://img.shields.io/badge/docker-ready-2496ED.svg)
+
+```text
+   client  (Kilo · OpenCode · LangChain · OpenAI SDK · curl)
+      │   Authorization: Bearer <PROXY_AUTH_TOKEN>
+      ▼
+   CustomProxy  :3001
+      ├── provider-a   keys k1..kN   rotated on 401/402/403/429/5xx
+      ├── provider-b   keys k1..kN
+      └── ...          model id = provider-a/<upstream-model-id>
 ```
-client (Kilo / OpenCode / LangChain / OpenAI SDK / curl)
-   |  Authorization: Bearer <PROXY_AUTH_TOKEN>
-   v
-CustomProxy :3001  ──►  provider 1 (keys k1..kN, rotated)
-                   ──►  provider 2 (keys k1..kN, rotated)
-                   ──►  ...
-```
+
+Nothing else is required. The proxy runs fine with a single provider and ships
+with no external network or host-path dependencies. It publishes on
+`127.0.0.1` only.
 
 ## Contents
 
-- [What it does](#what-it-does)
+- [Highlights](#highlights)
 - [Quick start](#quick-start)
-- [Key format (.env)](#key-format-env)
+- [Key format](#key-format)
 - [Adding a provider](#adding-a-provider)
 - [Model filters](#model-filters)
 - [Endpoints](#endpoints)
 - [Error model](#error-model)
-- [Production notes](#production-notes)
-- [Tests & CI](#tests--ci)
+- [Security](#security)
+- [Portability](#portability)
+- [Tests and CI](#tests-and-ci)
+- [Repository layout](#repository-layout)
 - [Documentation](#documentation)
+- [Contributing](#contributing)
 - [License](#license)
 
-## What it does
+## Highlights
 
 | Feature | Detail |
 |---|---|
-| OpenAI-compatible | `/v1/chat/completions`, `/v1/completions`, `/v1/embeddings`, streaming SSE, tools, multipart (audio/images) |
-| Any base URL | Works with `/v1` or without it |
-| Key rotation | Per-provider pools, rotate on 401/402/403/429/5xx, escalating cooldown, `Retry-After` honoured |
-| Dynamic catalog | Discovers all models from each provider's `/models`, refreshes every `CATALOG_REFRESH_SECONDS`, writes `kilo_models.json` |
-| Free-model auto-discovery | `filter_free` providers expose **only** free models, discovered live — no sync script, no static list. Pre-enabled for `kilo`, `nvidia`, `openrouter`; opt in per provider anywhere else |
-| Model filters | `models` / `include_models` / `exclude_models` (globs + `re:` regex) / `max_models` / `filter_free`, enforced on the catalog **and** direct calls |
-| Provider filters | `provider_filters` + per-provider `enabled: false` |
-| Env-defined providers | `CUSTOM_PROVIDERS_JSON` lets users add providers without editing config |
-| Metadata | Context window, pricing, modalities, `category` (text/vision/audio/embedding/image-generation), `free` |
-| Thinking control | Per-provider `reasoning_auto` / `reasoning_default` / `reasoning_levels`, clamped and only injected for reasoning-capable models |
-| Exact errors | Billing → `402`, auth → `401`, rate limit → `429` + `Retry-After`, context → `400`; never a generic "keys exhausted" |
-| Request log | In-memory + JSONL: outcome, latency, status, key id, attempts, token usage, exact upstream error |
-| Secrets | All upstream keys in `.env` (never in config, never sent to clients), labels as key ids in logs |
+| OpenAI-compatible | `/v1/chat/completions`, `/v1/completions`, `/v1/embeddings`, streaming SSE, tool calls, multipart audio and images |
+| Any base URL | Works whether the upstream path includes `/v1` or not |
+| Key rotation | Per-provider pools, rotated on `401`/`402`/`403`/`429`/`5xx`, escalating cooldown, `Retry-After` honoured |
+| Dynamic catalog | Discovers every model from each provider's `/models`, refreshes on a timer, serves `/v1/models` and `/.well-known/opencode` |
+| Free-model discovery | `filter_free` providers expose only free models, discovered live. Pre-enabled for `kilo`, `nvidia`, `openrouter` |
+| Model filters | `models`, `include_models`, `exclude_models` (globs and `re:` regex), `max_models`, `filter_free`, enforced on the catalog and on direct calls |
+| Provider filters | `provider_filters` include/exclude, plus per-provider `enabled: false` |
+| Env-defined providers | `CUSTOM_PROVIDERS_JSON` adds providers without editing `config.json` |
+| Metadata | Context window, max output, pricing, modalities, category, `free` flag and capability flags |
+| Thinking control | Per-provider `reasoning_auto` / `reasoning_default` / `reasoning_levels`, applied only to reasoning-capable models |
+| Exact errors | Billing `402`, auth `401`, rate limit `429` with `Retry-After`, context `400`; never a generic "keys exhausted" |
+| Request log | In-memory and JSONL: outcome, status, latency, key label, attempts, token usage, exact upstream error |
+| Secret safety | Keys live only in `.env`; responses and logs are scrubbed of any configured key |
 
 ## Quick start
 
-Requires Docker (or Python 3.11+ if you prefer to run it directly). No fixed
-paths, no external networks, no other project needed.
+Docker is the easy path, or run it directly on Python 3.11+. There are no
+fixed paths, no external networks and nothing else to set up.
 
 ```bash
-cp .env.example .env      # Windows: copy .env.example .env
+cp .env.example .env          # Windows:  copy .env.example .env
 ```
 
-Open `.env` and set `PROXY_AUTH_TOKEN` to a long random string:
+Set `PROXY_AUTH_TOKEN` in `.env` to a long random string:
 
 ```bash
-python -c "import secrets;print(secrets.token_urlsafe(32))"
+python -c "import secrets; print(secrets.token_urlsafe(32))"
 ```
 
-Then add the provider keys you actually have and start it:
+Uncomment the provider key pools you have (a provider with no keys is skipped,
+not an error), then start it:
 
 ```bash
 docker compose up -d --build
 curl http://127.0.0.1:3001/health
 ```
 
-Providers you leave without keys are skipped, not an error — the proxy starts
-fine with a single provider.
+Point any OpenAI client at it:
+
+- base_url: `http://127.0.0.1:3001/v1`
+- api_key: the `PROXY_AUTH_TOKEN` you set
+- model: `provider/upstream-model-id` (list them with `GET /v1/models`)
+
+The port binds to `127.0.0.1` only. For remote access use an SSH tunnel or a
+TLS reverse proxy you control.
 
 ### Without Docker
 
 ```bash
 python -m venv .venv
-source .venv/bin/activate      # Windows: .venv\Scripts\activate
+source .venv/bin/activate          # Windows:  .venv\Scripts\activate
 pip install -r requirements.txt
-export PROXY_AUTH_TOKEN=$(python -c "import secrets;print(secrets.token_urlsafe(32))")
+export PROXY_AUTH_TOKEN=$(python -c "import secrets; print(secrets.token_urlsafe(32))")
 python src/server.py
 ```
 
-Catalog and logs are written to `state/` and `logs/` next to the project.
-
-Point any OpenAI client at:
-
-- **base_url:** `http://127.0.0.1:3001/v1` (or `http://127.0.0.1:3001`)
-- **api_key:** the value of `PROXY_AUTH_TOKEN` from `.env`
-- **model:** `provider/upstream-model-id` (see `/v1/models`)
-
-The port is published on `127.0.0.1` only — the proxy and its upstream keys
-are never reachable from the internet. For remote access use an SSH tunnel or
-your own TLS reverse proxy; never expose the port directly.
+The catalog and request log are written to `state/` and `logs/` next to the
+project.
 
 ### Changing the port
 
-Set `PROXY_HOST_PORT` in `.env` if `3001` is already taken:
+Set `PROXY_HOST_PORT` in `.env` when `3001` is already taken. The proxy still
+listens on `3001` inside the container; only the published port changes.
 
 ```env
 PROXY_HOST_PORT=8080
 ```
 
-Inside the container the proxy still listens on `3001`; only the published
-port changes.
+## Key format
 
-## Key format (.env)
+One pool per provider, comma separated. Each item is `key` or `label=key`. The
+label only identifies the key in `/logs` and is stripped before the request goes
+upstream.
 
 ```env
-TOKENHARBOUR_API_KEYS=th-1=thk_xxx,th-2=thk_yyy      # label=key (label = key id in /logs)
-NVIDIA_API_KEYS=nv-1=nvapi-xxx                        # label optional (auto: provider-envN)
-OPENROUTER_API_KEYS_JSON=[{"label":"or-1","key":"sk-or-xxx=="}]   # keys containing '='
+TOKENHARBOUR_API_KEYS=th-1=thk_xxx,th-2=thk_yyy
+NVIDIA_API_KEYS=nv-1=nvapi-xxx
+OPENROUTER_API_KEYS_JSON=[{"label":"or-1","key":"sk-or-xxx=="}]
 ```
 
-The `label=` prefix is stripped before the key is sent upstream; it exists only
-so you can identify which key handled a request in `/logs`.
+Use the JSON form when a key itself contains `=` (set `keys_json_env` on the
+provider in `src/config.json`).
 
 ## Adding a provider
 
-**In `src/config.json`**:
+In `src/config.json`:
 
 ```json
 "myprovider": {
@@ -134,107 +151,114 @@ so you can identify which key handled a request in `/logs`.
 }
 ```
 
-Then in `.env`: `MYPROVIDER_API_KEYS=mp-1=sk-xxx`.
+Then add `MYPROVIDER_API_KEYS=mp-1=sk-xxx` to `.env`.
 
-**Or purely via env** (no config edit):
+Or define it entirely in the environment, with no config edit:
 
 ```env
 CUSTOM_PROVIDERS_JSON=[{"name":"myprovider","base_url":"https://api.example.com/v1","keys_env":"MYPROVIDER_API_KEYS","models":[]}]
 ```
 
+The provider id becomes the model prefix: `myprovider/<upstream-model-id>`.
+
 ## Model filters
 
 | Key | Meaning |
 |---|---|
-| `models` | exact ids or globs; empty = discover everything |
-| `include_models` | must match one pattern to be kept |
-| `exclude_models` | matching models are dropped (catalog + calls → `403 model_filtered`) |
-| `filter_free` | keep only models positively known to be free; paid ones are dropped from the catalog **and** blocked on direct calls (`403 model_filtered`). Unknown-pricing models are kept, but once a map has loaded an id the upstream never listed is refused too |
-| `max_models` | cap the catalog (free models first, then alphabetical) |
+| `models` | Exact ids or globs; empty discovers everything |
+| `include_models` | A model must match one pattern to be kept |
+| `exclude_models` | Matching models are dropped from the catalog and refused on direct calls (`403 model_filtered`) |
+| `filter_free` | Keeps only models positively known to be free. Paid models are dropped from the catalog and refused on direct calls; unknown-pricing models are kept, but once a provider map has loaded, an id the upstream never listed is refused too |
+| `max_models` | Caps the catalog, free models first. Capped-out ids are refused on direct calls as well |
 
-Precedence: `models` → `include_models` → `exclude_models` → `filter_free` → `max_models`.
-`max_models` caps the catalog only; a matching model beyond the cap is still callable.
+Precedence: `models`, then `include_models`, `exclude_models`, `filter_free`,
+`max_models`. `manual_models` bypass every filter, including `filter_free`.
 
 ## Endpoints
 
 | Path | Auth | Purpose |
 |---|---|---|
-| `GET /health` | minimal (full stats with token) | liveness + key stats + filter summary |
-| `GET /v1/models` | token | aggregated live catalog with metadata |
-| `GET /v1/models/{id}` | token | one model's metadata |
-| `POST /v1/*` | token | proxied to the provider chosen by the `model` prefix |
-| `GET /logs?limit=&outcome=&provider=&model=` | token | per-request log |
-| `POST /refresh`, `POST /catalog/refresh` | token | force catalog refresh |
-| `GET /.well-known/opencode` | open | Kilo/OpenCode catalog |
+| `GET /health` | minimal body, full stats with token | Liveness, key stats, filter summary |
+| `GET /v1/models` | token | Live catalog with metadata |
+| `GET /v1/models/{id}` | token | Metadata for one model |
+| `POST /v1/*` | token | Proxied to the provider named in the model prefix |
+| `GET /logs?limit=&outcome=&provider=&model=` | token | Per-request log |
+| `POST /refresh`, `POST /catalog/refresh` | token | Force a catalog refresh |
+| `GET /.well-known/opencode` | none | Kilo/OpenCode catalog |
 
 ## Error model
 
-| Situation | Returned |
+| Situation | Response |
 |---|---|
-| Billing / no credit / quota | `402 billing_required` + exact upstream message |
-| Invalid/revoked key | `401 auth_error` + exact message |
-| Rate limited | `429 rate_limited` + `Retry-After` |
-| All keys cooling | `429 all_keys_cooling` + seconds to next key |
-| Context too long | `400 context_length` + exact message |
+| Billing or quota | `402 billing_required` with the exact upstream message |
+| Invalid or revoked key | `401 auth_error` with the exact message |
+| Rate limited | `429 rate_limited` with `Retry-After` |
+| All keys cooling | `429 all_keys_cooling` with seconds to the next key |
+| Context too long | `400 context_length` with the exact message |
 | Unknown provider | `404 unknown_provider` |
 | Filtered model | `403 model_filtered` |
-| Upstream 5xx after all keys | `502 upstream_error` + last message |
+| Upstream 5xx after all keys | `502 upstream_error` with the last message |
 
-Every response carries `x-request-id`; the same id is in `/logs` and
-`logs/requests.jsonl` for tracing.
+Every response carries `x-request-id`, the same id you find in `/logs` and
+`logs/requests.jsonl`.
 
-## Production notes
+## Security
 
-- Runs unprivileged (`app`, uid 10001) with `no-new-privileges`, dropped caps, read-only root FS, `tmpfs /tmp`.
-- Startup **refuses to run** without `PROXY_AUTH_TOKEN` unless `allow_no_auth: true`.
-- Body size limit: `max_request_bytes` (32 MB default). Optional local rate limit: `rate_limit_per_minute` (0 = off); since `X-Forwarded-For` is caller-controlled, it is only honoured for peers listed in `trusted_proxies`.
-- Config toggles: `debug_enabled`, `request_body_log_enabled` (full prompts; off by default), `write_catalog`, `catalog_refresh_seconds`.
-- The entrypoint needs `CHOWN/SETUID/SETGID` caps only to fix mount ownership, then drops to `app`.
-- MCP key-rotation relays are **opt-in**: leave `KEY_ROTATE_SERVICES` empty and only the proxy runs.
+- Runs as unprivileged `app` (uid 10001) with `no-new-privileges`, all
+  capabilities dropped except the three the entrypoint needs, a read-only root
+  filesystem and a `tmpfs` `/tmp`.
+- Refuses to start without `PROXY_AUTH_TOKEN` unless `allow_no_auth: true` is
+  set.
+- Body size limit `max_request_bytes` (32 MB default) and an optional local rate
+  limit. `X-Forwarded-For` is trusted only for peers listed in
+  `trusted_proxies`.
+- Upstream keys stay in the deployment: injected from `.env`, never written to
+  `config.json`, never returned by an endpoint, and scrubbed from logs and error
+  messages.
+
+See [SECURITY.md](SECURITY.md) for the key-leak runbook.
 
 ## Portability
 
-Nothing in this repo is tied to one machine:
+Nothing here is tied to one machine.
 
-- No absolute host paths. The catalog and log paths are relative
-  (`state/kilo_models.json`, `logs/requests.jsonl`) and resolve against the
-  project root, which is detected from the file layout — a repo checkout and
-  `/app/customproxy` inside the image both work. Override with
-  `CUSTOMPROXY_HOME` if you place things elsewhere.
-- No sibling projects or external Docker networks. `compose.yml` is
-  self-contained.
-- No fixed host port. `PROXY_HOST_PORT` changes it; the container port stays
-  `3001`.
-- No provider is required. A provider without keys is skipped at startup, so a
-  fresh clone runs with one provider or ten.
-- Linux/amd64 and arm64: the base image is multi-arch and every system
-  dependency is installed from apt.
+- Catalog and log paths are relative and resolve against the project root,
+  detected from the file layout, so a repo checkout and `/app/customproxy`
+  inside the image both work. Override with `CUSTOMPROXY_HOME`.
+- `compose.yml` is self-contained: no external networks, no sibling projects.
+- No fixed host port; `PROXY_HOST_PORT` changes it.
+- No provider is required; a provider without keys is skipped at startup.
+- Multi-arch base image (`amd64`, `arm64`) and every system dependency installed
+  from apt.
 
-## Tests & CI
+## Tests and CI
 
-```powershell
+```bash
 pip install -r requirements.txt -r requirements-dev.txt
 pytest
 ```
 
-GitHub Actions (`.github/workflows/ci.yml`) compiles all sources and runs the suite on Python 3.12.
+46 tests cover routing, rotation, the catalog, filters, error classification,
+the request log, the well-known endpoint and the free filter, across unit and
+end-to-end suites that run against a mocked upstream. GitHub Actions compiles
+every source file and runs pytest on Python 3.12.
 
 ## Repository layout
 
-```
+```text
 customproxy/
-├── src/server.py          proxy core (FastAPI, routing, rotation, catalog)
-├── src/config.json        provider definitions (no secrets — env names only)
-├── key_rotate_proxy.py    per-service key rotation relays (MCP tools)
-├── run-services.sh        container PID 1: proxy + relay supervisor
-├── entrypoint.sh          ownership fix, then drops to uid 10001
+├── src/server.py          proxy core (FastAPI: routing, rotation, catalog)
+├── src/config.json        provider definitions (no secrets, env names only)
+├── key_rotate_proxy.py    per-service key-rotation relays for MCP tools
+├── run-services.sh        container PID 1: proxy plus relay supervisor
+├── entrypoint.sh          fixes mount ownership, then drops to uid 10001
 ├── compose.yml            hardened standalone stack
 ├── Dockerfile
 ├── tests/                 pytest suite (46 tests)
 ├── docs/                  ARCHITECTURE.md, CONFIGURATION.md
-├── skills/                agent skills for provider/key/model management
-├── .env.example           every environment variable, with placeholders
-└── .github/               CI + issue/PR templates
+├── skills/                agent skills for provider, key and model management
+├── .env.example           every environment variable, placeholders only
+└── .github/               CI and issue/PR templates
 ```
 
 ## Documentation
@@ -247,6 +271,12 @@ customproxy/
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Local setup, test commands, review rules |
 | [CHANGELOG.md](CHANGELOG.md) | Release history |
 
+## Contributing
+
+Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for
+setup and the test command. Report vulnerabilities through the private channel
+in [SECURITY.md](SECURITY.md).
+
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT, see [LICENSE](LICENSE).
