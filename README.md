@@ -66,8 +66,11 @@ with no external network or host-path dependencies. It publishes on
 
 ## Quick start
 
-Docker is the easy path, or run it directly on Python 3.11+. There are no
-fixed paths, no external networks and nothing else to set up.
+Two prerequisites: Docker with Compose v2 (the easy path), or Python 3.11+ to
+run it directly. You also need at least one provider API key. With no keys the
+proxy still starts, but `/v1/models` stays empty and every call returns
+`503 no_keys`. There are no fixed paths, no external networks and nothing else
+to set up.
 
 ```bash
 cp .env.example .env          # Windows:  copy .env.example .env
