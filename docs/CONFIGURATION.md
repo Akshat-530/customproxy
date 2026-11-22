@@ -65,7 +65,7 @@ Environment overrides: `PROXY_PORT`, `PROXY_HOST_PORT` (compose port mapping),
 | `models` | Exact ids **or globs**; empty `[]` = discover everything |
 | `include_models` | Kept only if it matches one pattern |
 | `exclude_models` | Dropped from catalog **and blocked on calls** (`403 model_filtered`) |
-| `max_models` | Catalog cap, free models first (catalog-only, not access) |
+| `max_models` | Catalog cap, free models first. Capped-out ids are also refused on direct calls (`403 model_filtered`) |
 | `manual_models` | Hand-added models; bypass filters, survive refreshes |
 | `filter_free` | Auto-discover free models only. Paid models are dropped from the catalog and blocked on direct calls; models with no pricing data are kept (they cannot be proven paid) |
 
